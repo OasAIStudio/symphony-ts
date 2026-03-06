@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
 
+import type { ResolvedWorkflowConfig } from "../../src/config/types.js";
 import type { Issue } from "../../src/domain/model.js";
 import {
   OrchestratorCore,
+  type OrchestratorCoreOptions,
   computeFailureRetryDelayMs,
   sortIssuesForDispatch,
-  type OrchestratorCoreOptions,
 } from "../../src/orchestrator/core.js";
-import type { ResolvedWorkflowConfig } from "../../src/config/types.js";
-import type { IssueStateSnapshot, IssueTracker } from "../../src/tracker/tracker.js";
+import type {
+  IssueStateSnapshot,
+  IssueTracker,
+} from "../../src/tracker/tracker.js";
 
 describe("orchestrator core", () => {
   it("sorts dispatch candidates by priority, age, and identifier", () => {
@@ -82,9 +85,7 @@ describe("orchestrator core", () => {
 
   it("updates running issue state during reconciliation", async () => {
     const tracker = createTracker({
-      statesById: [
-        { id: "1", identifier: "ISSUE-1", state: "In Review" },
-      ],
+      statesById: [{ id: "1", identifier: "ISSUE-1", state: "In Review" }],
     });
     const orchestrator = createOrchestrator({ tracker });
 
@@ -98,9 +99,7 @@ describe("orchestrator core", () => {
   it("requests stop without cleanup when a running issue becomes non-active", async () => {
     const stopRequests: unknown[] = [];
     const tracker = createTracker({
-      statesById: [
-        { id: "1", identifier: "ISSUE-1", state: "Backlog" },
-      ],
+      statesById: [{ id: "1", identifier: "ISSUE-1", state: "Backlog" }],
     });
     const orchestrator = createOrchestrator({
       tracker,
@@ -125,9 +124,7 @@ describe("orchestrator core", () => {
 
   it("requests stop with cleanup when a running issue becomes terminal", async () => {
     const tracker = createTracker({
-      statesById: [
-        { id: "1", identifier: "ISSUE-1", state: "Done" },
-      ],
+      statesById: [{ id: "1", identifier: "ISSUE-1", state: "Done" }],
     });
     const orchestrator = createOrchestrator({ tracker });
 
@@ -257,7 +254,12 @@ describe("orchestrator core", () => {
     });
 
     await orchestrator.pollTick();
-    orchestrator.getState().running["1"]!.startedAt = "2026-03-06T00:00:00.000Z";
+    const runningEntry = orchestrator.getState().running["1"];
+    expect(runningEntry).toBeDefined();
+    if (runningEntry === undefined) {
+      throw new Error("Expected issue 1 to be running.");
+    }
+    runningEntry.startedAt = "2026-03-06T00:00:00.000Z";
     const result = await orchestrator.pollTick();
 
     expect(result.stopRequests).toContainEqual({
@@ -313,7 +315,9 @@ function createTracker(input?: {
 }): IssueTracker {
   return {
     async fetchCandidateIssues() {
-      return input?.candidates ?? [createIssue({ id: "1", identifier: "ISSUE-1" })];
+      return (
+        input?.candidates ?? [createIssue({ id: "1", identifier: "ISSUE-1" })]
+      );
     },
     async fetchIssuesByStates() {
       return [];

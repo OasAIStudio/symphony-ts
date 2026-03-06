@@ -1,18 +1,18 @@
-import {
-  createEmptyLiveSession,
-  createInitialOrchestratorState,
-  normalizeIssueState,
-  type Issue,
-  type OrchestratorState,
-  type RetryEntry,
-  type RunningEntry,
-} from "../domain/model.js";
-import { addEndedSessionRuntime } from "../logging/session-metrics.js";
 import { validateDispatchConfig } from "../config/config-resolver.js";
 import type {
   DispatchValidationResult,
   ResolvedWorkflowConfig,
 } from "../config/types.js";
+import {
+  type Issue,
+  type OrchestratorState,
+  type RetryEntry,
+  type RunningEntry,
+  createEmptyLiveSession,
+  createInitialOrchestratorState,
+  normalizeIssueState,
+} from "../domain/model.js";
+import { addEndedSessionRuntime } from "../logging/session-metrics.js";
 import type { IssueStateSnapshot, IssueTracker } from "../tracker/tracker.js";
 
 const CONTINUATION_RETRY_DELAY_MS = 1_000;
@@ -20,10 +20,7 @@ const FAILURE_RETRY_BASE_DELAY_MS = 10_000;
 
 export type WorkerExitOutcome = "normal" | "abnormal";
 
-export type StopReason =
-  | "terminal_state"
-  | "inactive_state"
-  | "stall_timeout";
+export type StopReason = "terminal_state" | "inactive_state" | "stall_timeout";
 
 export interface SpawnWorkerResult {
   workerHandle: unknown;
@@ -149,7 +146,10 @@ export class OrchestratorCore {
       return false;
     }
 
-    if (this.availableSlots() <= 0 || this.availableSlotsForState(issue.state) <= 0) {
+    if (
+      this.availableSlots() <= 0 ||
+      this.availableSlotsForState(issue.state) <= 0
+    ) {
       return false;
     }
 
@@ -158,7 +158,8 @@ export class OrchestratorCore {
     }
 
     return issue.blockedBy.every((blocker) => {
-      const blockerState = blocker.state === null ? null : normalizeIssueState(blocker.state);
+      const blockerState =
+        blocker.state === null ? null : normalizeIssueState(blocker.state);
       return blockerState !== null && terminalStates.has(blockerState);
     });
   }
@@ -243,7 +244,8 @@ export class OrchestratorCore {
       };
     }
 
-    const issue = candidates.find((candidate) => candidate.id === issueId) ?? null;
+    const issue =
+      candidates.find((candidate) => candidate.id === issueId) ?? null;
     if (issue === null) {
       this.releaseClaim(issueId);
       return {
@@ -262,7 +264,10 @@ export class OrchestratorCore {
       };
     }
 
-    if (this.availableSlots() <= 0 || this.availableSlotsForState(issue.state) <= 0) {
+    if (
+      this.availableSlots() <= 0 ||
+      this.availableSlotsForState(issue.state) <= 0
+    ) {
       return {
         dispatched: false,
         released: false,
@@ -294,7 +299,11 @@ export class OrchestratorCore {
     }
 
     delete this.state.running[input.issueId];
-    addEndedSessionRuntime(this.state, runningEntry.startedAt, input.endedAt ?? this.now());
+    addEndedSessionRuntime(
+      this.state,
+      runningEntry.startedAt,
+      input.endedAt ?? this.now(),
+    );
 
     if (input.outcome === "normal") {
       this.state.completed.add(input.issueId);
@@ -425,7 +434,9 @@ export class OrchestratorCore {
     }
 
     const activeStates = toNormalizedStateSet(this.config.tracker.activeStates);
-    const terminalStates = toNormalizedStateSet(this.config.tracker.terminalStates);
+    const terminalStates = toNormalizedStateSet(
+      this.config.tracker.terminalStates,
+    );
 
     for (const snapshot of refreshed) {
       const runningEntry = this.state.running[snapshot.id];
@@ -563,12 +574,14 @@ export class OrchestratorCore {
 
 export function sortIssuesForDispatch(issues: readonly Issue[]): Issue[] {
   return issues.slice().sort((left, right) => {
-    const priorityDelta = toSortablePriority(left.priority) - toSortablePriority(right.priority);
+    const priorityDelta =
+      toSortablePriority(left.priority) - toSortablePriority(right.priority);
     if (priorityDelta !== 0) {
       return priorityDelta;
     }
 
-    const createdAtDelta = toSortableDate(left.createdAt) - toSortableDate(right.createdAt);
+    const createdAtDelta =
+      toSortableDate(left.createdAt) - toSortableDate(right.createdAt);
     if (createdAtDelta !== 0) {
       return createdAtDelta;
     }

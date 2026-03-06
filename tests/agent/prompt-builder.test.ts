@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_WORKFLOW_PROMPT,
+  buildContinuationPrompt,
+  buildTurnPrompt,
   getEffectivePromptTemplate,
   renderPrompt,
 } from "../../src/agent/prompt-builder.js";
@@ -68,6 +70,46 @@ describe("prompt builder", () => {
     });
 
     expect(prompt).toBe("first-run");
+  });
+
+  it("uses the rendered workflow prompt for the first turn and continuation guidance after that", async () => {
+    const first = await buildTurnPrompt({
+      workflow: {
+        promptTemplate: "Initial {{ issue.identifier }} attempt={{ attempt }}",
+      },
+      issue: ISSUE_FIXTURE,
+      attempt: 3,
+      turnNumber: 1,
+      maxTurns: 4,
+    });
+    const second = await buildTurnPrompt({
+      workflow: {
+        promptTemplate: "Initial {{ issue.identifier }} attempt={{ attempt }}",
+      },
+      issue: ISSUE_FIXTURE,
+      attempt: 3,
+      turnNumber: 2,
+      maxTurns: 4,
+    });
+
+    expect(first).toBe("Initial ABC-123 attempt=3");
+    expect(second).toContain("Continue working on issue ABC-123");
+    expect(second).toContain("continuation turn 2 of 4");
+    expect(second).not.toContain("Initial ABC-123 attempt=3");
+  });
+
+  it("builds continuation guidance with issue and attempt context", () => {
+    const prompt = buildContinuationPrompt({
+      issue: ISSUE_FIXTURE,
+      attempt: null,
+      turnNumber: 2,
+      maxTurns: 5,
+    });
+
+    expect(prompt).toContain("ABC-123");
+    expect(prompt).toContain("Ship prompt rendering");
+    expect(prompt).toContain("Current tracker state: In Progress.");
+    expect(prompt).toContain("initial dispatch");
   });
 
   it("fails on unknown variables in strict mode", async () => {

@@ -33,6 +33,11 @@ export interface RenderPromptInput {
   attempt: number | null;
 }
 
+export interface BuildTurnPromptInput extends RenderPromptInput {
+  turnNumber: number;
+  maxTurns: number;
+}
+
 export function getEffectivePromptTemplate(promptTemplate: string): string {
   const trimmed = promptTemplate.trim();
 
@@ -52,6 +57,43 @@ export async function renderPrompt(input: RenderPromptInput): Promise<string> {
   } catch (error) {
     throw toPromptTemplateError(error);
   }
+}
+
+export async function buildTurnPrompt(
+  input: BuildTurnPromptInput,
+): Promise<string> {
+  if (input.turnNumber <= 1) {
+    return await renderPrompt(input);
+  }
+
+  return buildContinuationPrompt({
+    issue: input.issue,
+    attempt: input.attempt,
+    turnNumber: input.turnNumber,
+    maxTurns: input.maxTurns,
+  });
+}
+
+export function buildContinuationPrompt(input: {
+  issue: Issue;
+  attempt: number | null;
+  turnNumber: number;
+  maxTurns: number;
+}): string {
+  const attemptLine =
+    input.attempt === null
+      ? "This worker session started from the initial dispatch."
+      : `This worker session is running retry/continuation attempt ${input.attempt}.`;
+
+  return [
+    `Continue working on issue ${input.issue.identifier}: ${input.issue.title}.`,
+    `This is continuation turn ${input.turnNumber} of ${input.maxTurns} in the current worker session.`,
+    attemptLine,
+    `Current tracker state: ${input.issue.state}.`,
+    "Reuse the existing thread context and current workspace state.",
+    "Do not restate the original task prompt unless it is strictly needed.",
+    "Make the next best progress on the issue, then stop when this session has no further useful work to do.",
+  ].join("\n");
 }
 
 function toTemplateIssue(issue: Issue): Record<string, unknown> {
