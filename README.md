@@ -28,7 +28,6 @@ moving from managing coding agents to managing work that needs to get done.
 ### Requirements
 
 - Node.js `>= 22`
-- pnpm `>= 10`
 - a repository with a valid `WORKFLOW.md`
 - tracker credentials such as `LINEAR_API_KEY`
 - a coding agent runtime that supports app-server mode, such as `codex app-server`
@@ -124,6 +123,8 @@ Once Symphony is running, it will:
 - keep retry, reconciliation, and cleanup state visible to operators
 
 ### Develop
+
+If you are developing Symphony itself rather than using the published CLI, you will also need `pnpm >= 10`.
 
 ```bash
 pnpm install
