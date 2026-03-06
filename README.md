@@ -37,6 +37,12 @@ moving from managing coding agents to managing work that needs to get done.
 pnpm install
 ```
 
+If you want the packaged CLI after publishing:
+
+```bash
+npm install -g symphony-ts
+```
+
 ### Develop
 
 ```bash
