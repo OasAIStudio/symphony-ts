@@ -251,6 +251,34 @@ Prompt body
     } satisfies Partial<RuntimeHostStartupError>);
   });
 
+  it("logs operator-visible warnings when a poll tick cannot fetch candidate issues", async () => {
+    const stdout = new PassThrough();
+    let output = "";
+    stdout.setEncoding("utf8");
+    stdout.on("data", (chunk: string) => {
+      output += chunk;
+    });
+
+    const service = await startRuntimeService({
+      config: createConfig({
+        polling: {
+          intervalMs: 60_000,
+        },
+      }),
+      tracker: createTracker({
+        candidatesError: new Error("tracker unavailable"),
+      }),
+      stdout,
+    });
+
+    await vi.waitFor(() => {
+      expect(output).toContain('"event":"candidate_issue_fetch_failed"');
+    });
+
+    await service.shutdown();
+    expect(await service.waitForExit()).toBe(0);
+  });
+
   it("reloads workflow changes into the running service and rejects invalid reloads", async () => {
     const root = await createTempDir("symphony-task18-reload-");
     const logsRoot = join(root, "logs");

@@ -297,6 +297,40 @@ describe("CodexAppServerClient", () => {
 
     await client.close();
   });
+
+  it("disables stall detection when stallTimeoutMs is zero", async () => {
+    const workspace = await createWorkspace();
+    const events: CodexClientEvent[] = [];
+    const client = createClient("turn-timeout", workspace, events, {
+      stallTimeoutMs: 0,
+      turnTimeoutMs: 50,
+    });
+
+    await expect(
+      client.startSession({
+        prompt: "Wait for turn timeout",
+        title: "ABC-123: Example",
+      }),
+    ).rejects.toMatchObject({
+      name: "CodexAppServerClientError",
+      code: ERROR_CODES.codexTurnTimeout,
+    } satisfies Partial<CodexAppServerClientError>);
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: "turn_ended_with_error",
+        errorCode: ERROR_CODES.codexTurnTimeout,
+      }),
+    );
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        event: "turn_ended_with_error",
+        errorCode: ERROR_CODES.codexSessionStalled,
+      }),
+    );
+
+    await client.close();
+  });
 });
 
 function createClient(

@@ -202,11 +202,14 @@ describe("config-resolver", () => {
   });
 
   it("blocks dispatch when required tracker settings are missing", () => {
-    const resolved = resolveWorkflowConfig({
-      workflowPath: "/repo/WORKFLOW.md",
-      promptTemplate: "Prompt",
-      config: {},
-    });
+    const resolved = resolveWorkflowConfig(
+      {
+        workflowPath: "/repo/WORKFLOW.md",
+        promptTemplate: "Prompt",
+        config: {},
+      },
+      {},
+    );
 
     const validation = validateDispatchConfig(resolved);
     expect(validation).toEqual({

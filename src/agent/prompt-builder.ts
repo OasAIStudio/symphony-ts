@@ -13,7 +13,7 @@ const liquidEngine = new Liquid({
 });
 
 export class PromptTemplateError extends Error {
-  readonly code = ERROR_CODES.promptRenderFailed;
+  readonly code: string;
   readonly kind: "template_parse_error" | "template_render_error";
 
   constructor(
@@ -23,6 +23,10 @@ export class PromptTemplateError extends Error {
   ) {
     super(message, options);
     this.name = "PromptTemplateError";
+    this.code =
+      kind === "template_parse_error"
+        ? ERROR_CODES.templateParseError
+        : ERROR_CODES.templateRenderError;
     this.kind = kind;
   }
 }
@@ -104,16 +108,16 @@ function toTemplateIssue(issue: Issue): Record<string, unknown> {
     description: issue.description,
     priority: issue.priority,
     state: issue.state,
-    branchName: issue.branchName,
+    branch_name: issue.branchName,
     url: issue.url,
     labels: [...issue.labels],
-    blockedBy: issue.blockedBy.map((blocker) => ({
+    blocked_by: issue.blockedBy.map((blocker) => ({
       id: blocker.id,
       identifier: blocker.identifier,
       state: blocker.state,
     })),
-    createdAt: issue.createdAt,
-    updatedAt: issue.updatedAt,
+    created_at: issue.createdAt,
+    updated_at: issue.updatedAt,
   };
 }
 

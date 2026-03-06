@@ -457,7 +457,8 @@ export async function startRuntimeService(
 
   const runPollCycle = async () => {
     try {
-      await runtimeHost.pollOnce();
+      const result = await runtimeHost.pollOnce();
+      await logPollCycleResult(logger, result);
       scheduleNextPoll();
     } catch (error) {
       await logger.error("runtime_poll_failed", toErrorMessage(error), {
@@ -567,6 +568,43 @@ export async function startRuntimeService(
     },
     shutdown,
   };
+}
+
+async function logPollCycleResult(
+  logger: StructuredLogger,
+  result: Awaited<ReturnType<OrchestratorRuntimeHost["pollOnce"]>>,
+): Promise<void> {
+  if (!result.validation.ok) {
+    await logger.error(
+      "dispatch_validation_failed",
+      result.validation.error.message,
+      {
+        error_code: result.validation.error.code,
+      },
+    );
+  }
+
+  if (result.reconciliationFetchFailed) {
+    await logger.warn(
+      "reconciliation_state_refresh_failed",
+      "Issue state reconciliation failed; keeping current workers running.",
+      {
+        outcome: "degraded",
+        reason: "tracker_state_refresh_failed",
+      },
+    );
+  }
+
+  if (result.trackerFetchFailed) {
+    await logger.warn(
+      "candidate_issue_fetch_failed",
+      "Tracker candidate fetch failed; dispatch skipped for this tick.",
+      {
+        outcome: "degraded",
+        reason: "tracker_candidate_fetch_failed",
+      },
+    );
+  }
 }
 
 async function createRuntimeWorkflowWatcher(input: {
