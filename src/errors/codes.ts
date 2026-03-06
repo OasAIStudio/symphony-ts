@@ -20,6 +20,7 @@ export const ERROR_CODES = {
   trackerResponseMalformed: "tracker_response_malformed",
   workspacePathInvalid: "workspace_path_invalid",
   workspaceRootEscape: "workspace_root_escape",
+  invalidWorkspaceCwd: "invalid_workspace_cwd",
   workspaceCreateFailed: "workspace_create_failed",
   workspaceCleanupFailed: "workspace_cleanup_failed",
   hookFailed: "hook_failed",
