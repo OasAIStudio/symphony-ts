@@ -1,8 +1,32 @@
 {
   "name": "symphony-ts",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
+  "description": "TypeScript implementation of Symphony",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "symphony": "./dist/src/cli/main.js"
+  },
+  "files": ["dist/src", "README.md"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OasAIStudio/symphony-ts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/OasAIStudio/symphony-ts/issues"
+  },
+  "homepage": "https://github.com/OasAIStudio/symphony-ts#readme",
   "engines": {
     "node": ">=22.0.0",
     "pnpm": ">=10.0.0"
@@ -10,6 +34,7 @@
   "packageManager": "pnpm@10.30.2",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepack": "pnpm build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

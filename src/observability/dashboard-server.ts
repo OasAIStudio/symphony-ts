@@ -8,6 +8,8 @@ import {
 import { ERROR_CODES } from "../errors/codes.js";
 import type { RuntimeSnapshot } from "../logging/runtime-snapshot.js";
 
+const DEFAULT_SNAPSHOT_TIMEOUT_MS = 1_000;
+
 export interface IssueDetailRunningState {
   session_id: string | null;
   turn_count: number;
@@ -76,6 +78,7 @@ export interface DashboardServerHost {
 export interface DashboardServerOptions {
   host: DashboardServerHost;
   hostname?: string;
+  snapshotTimeoutMs?: number;
 }
 
 export interface DashboardServerInstance {
@@ -90,6 +93,9 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
   const handler = createDashboardRequestHandler({
     host: options.host,
     hostname,
+    ...(options.snapshotTimeoutMs === undefined
+      ? {}
+      : { snapshotTimeoutMs: options.snapshotTimeoutMs }),
   });
   return createServer((request, response) => {
     void handler(request, response);
@@ -140,6 +146,8 @@ export function createDashboardRequestHandler(
   options: DashboardServerOptions,
 ): (request: IncomingMessage, response: ServerResponse) => Promise<void> {
   const hostname = options.hostname ?? "127.0.0.1";
+  const snapshotTimeoutMs =
+    options.snapshotTimeoutMs ?? DEFAULT_SNAPSHOT_TIMEOUT_MS;
 
   return async (request, response) => {
     try {
@@ -152,7 +160,7 @@ export function createDashboardRequestHandler(
           return;
         }
 
-        const snapshot = await options.host.getRuntimeSnapshot();
+        const snapshot = await readSnapshot(options.host, snapshotTimeoutMs);
         writeHtml(response, 200, renderDashboardHtml(snapshot));
         return;
       }
@@ -163,7 +171,7 @@ export function createDashboardRequestHandler(
           return;
         }
 
-        const snapshot = await options.host.getRuntimeSnapshot();
+        const snapshot = await readSnapshot(options.host, snapshotTimeoutMs);
         writeJson(response, 200, snapshot);
         return;
       }
@@ -203,11 +211,27 @@ export function createDashboardRequestHandler(
 
       writeNotFound(response, url.pathname);
     } catch (error) {
+      if (isSnapshotTimeoutError(error)) {
+        writeJsonError(response, 504, ERROR_CODES.snapshotTimedOut, {
+          message: toErrorMessage(error),
+        });
+        return;
+      }
+
       writeJsonError(response, 500, ERROR_CODES.snapshotUnavailable, {
         message: toErrorMessage(error),
       });
     }
   };
+}
+
+async function readSnapshot(
+  host: DashboardServerHost,
+  timeoutMs: number,
+): Promise<RuntimeSnapshot> {
+  return await withTimeout(host.getRuntimeSnapshot(), timeoutMs, () => {
+    return new Error(`Runtime snapshot timed out after ${timeoutMs}ms.`);
+  });
 }
 
 function writeJson(
@@ -276,6 +300,36 @@ async function readRequestBody(request: IncomingMessage): Promise<void> {
     request.on("end", resolve);
     request.resume();
   });
+}
+
+async function withTimeout<T>(
+  promise: Promise<T> | T,
+  timeoutMs: number,
+  createError: () => Error,
+): Promise<T> {
+  return await new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(createError());
+    }, timeoutMs);
+
+    Promise.resolve(promise).then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
+function isSnapshotTimeoutError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.startsWith("Runtime snapshot timed out after ")
+  );
 }
 
 function renderDashboardHtml(snapshot: RuntimeSnapshot): string {

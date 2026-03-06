@@ -33,6 +33,24 @@ async function handleMessage(message) {
       return;
     }
 
+    if (scenario === "handshake") {
+      assertEqual(
+        message.params.clientInfo?.name,
+        "symphony-ts",
+        "initialize must include clientInfo.name",
+      );
+      assertEqual(
+        message.params.clientInfo?.version,
+        "0.1.0",
+        "initialize must include clientInfo.version",
+      );
+      assertEqual(
+        typeof message.params.capabilities,
+        "object",
+        "initialize must include a capabilities object",
+      );
+    }
+
     writeJson({
       id: message.id,
       result: {
@@ -55,6 +73,18 @@ async function handleMessage(message) {
         message.params.tools?.[0]?.name,
         "linear_graphql",
         "thread/start must advertise linear_graphql",
+      );
+    }
+    if (scenario === "handshake") {
+      assertEqual(
+        message.params.approvalPolicy,
+        "full-auto",
+        "thread/start must include approvalPolicy",
+      );
+      assertEqual(
+        message.params.sandbox,
+        "workspace-write",
+        "thread/start must include thread sandbox policy",
       );
     }
     writeJson({
@@ -81,6 +111,18 @@ async function handleMessage(message) {
       "text",
       "turn input must contain a single text item",
     );
+    if (scenario === "handshake") {
+      assertEqual(
+        message.params.approvalPolicy,
+        "full-auto",
+        "turn/start must include approvalPolicy",
+      );
+      assertEqual(
+        message.params.sandboxPolicy?.type,
+        "workspace-write",
+        "turn/start must include per-turn sandbox policy",
+      );
+    }
 
     writeJson({
       id: message.id,
@@ -107,6 +149,18 @@ async function handleMessage(message) {
       return;
     }
 
+    if (scenario === "user-input-variant") {
+      setTimeout(() => {
+        writeJson({
+          method: "turn/user_input_required",
+          params: {
+            reason: "Please confirm.",
+          },
+        });
+      }, 10);
+      return;
+    }
+
     if (turnCount === 1) {
       setTimeout(() => {
         process.stderr.write("diagnostic from stderr\n");
@@ -125,7 +179,10 @@ async function handleMessage(message) {
         setTimeout(() => {
           writeJson({
             id: "approval-1",
-            method: "approval/request",
+            method:
+              scenario === "payload-variants"
+                ? "turn/approval_required"
+                : "approval/request",
             params: {
               kind: "command_execution",
             },
@@ -140,17 +197,36 @@ async function handleMessage(message) {
         method: "turn/completed",
         params: {
           message: "Second turn finished",
-          result: {
-            rate_limits: {
-              requests_remaining: 9,
-              tokens_remaining: 999,
-            },
-          },
-          usage: {
-            inputTokens: 20,
-            outputTokens: 10,
-            totalTokens: 30,
-          },
+          result:
+            scenario === "payload-variants"
+              ? {
+                  telemetry: {
+                    usage: {
+                      input_tokens: 20,
+                      output_tokens: 10,
+                      total_tokens: 30,
+                    },
+                  },
+                  rate_limits: {
+                    requests_remaining: 9,
+                    tokens_remaining: 999,
+                  },
+                }
+              : {
+                  rate_limits: {
+                    requests_remaining: 9,
+                    tokens_remaining: 999,
+                  },
+                },
+          ...(scenario === "payload-variants"
+            ? {}
+            : {
+                usage: {
+                  inputTokens: 20,
+                  outputTokens: 10,
+                  totalTokens: 30,
+                },
+              }),
         },
       });
     }, 10);

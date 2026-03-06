@@ -44,7 +44,10 @@ describe("prompt builder", () => {
           "# {{ issue.identifier }}",
           "{{ issue.title }}",
           "{% for label in issue.labels %}[{{ label }}]{% endfor %}",
-          "{% for blocker in issue.blockedBy %}{{ blocker.identifier }}:{{ blocker.state }}{% endfor %}",
+          "{% for blocker in issue.blocked_by %}{{ blocker.identifier }}:{{ blocker.state }}{% endfor %}",
+          "{{ issue.branch_name }}",
+          "{{ issue.created_at }}",
+          "{{ issue.updated_at }}",
           "attempt={{ attempt }}",
         ].join("\n"),
       },
@@ -56,6 +59,9 @@ describe("prompt builder", () => {
     expect(prompt).toContain("Ship prompt rendering");
     expect(prompt).toContain("[backend][automation]");
     expect(prompt).toContain("ABC-122:Todo");
+    expect(prompt).toContain("feature/abc-123");
+    expect(prompt).toContain("2026-03-06T00:00:00.000Z");
+    expect(prompt).toContain("2026-03-06T01:00:00.000Z");
     expect(prompt).toContain("attempt=2");
   });
 
@@ -123,7 +129,7 @@ describe("prompt builder", () => {
       }),
     ).rejects.toMatchObject({
       name: "PromptTemplateError",
-      code: ERROR_CODES.promptRenderFailed,
+      code: ERROR_CODES.templateRenderError,
       kind: "template_render_error",
     } satisfies Partial<PromptTemplateError>);
   });
@@ -139,7 +145,7 @@ describe("prompt builder", () => {
       }),
     ).rejects.toMatchObject({
       name: "PromptTemplateError",
-      code: ERROR_CODES.promptRenderFailed,
+      code: ERROR_CODES.templateRenderError,
       kind: "template_render_error",
     } satisfies Partial<PromptTemplateError>);
   });
@@ -155,7 +161,7 @@ describe("prompt builder", () => {
       }),
     ).rejects.toMatchObject({
       name: "PromptTemplateError",
-      code: ERROR_CODES.promptRenderFailed,
+      code: ERROR_CODES.templateParseError,
       kind: "template_parse_error",
     } satisfies Partial<PromptTemplateError>);
   });

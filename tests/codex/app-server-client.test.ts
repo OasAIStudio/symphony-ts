@@ -136,6 +136,79 @@ describe("CodexAppServerClient", () => {
     await client.close();
   });
 
+  it("accepts compatible approval and telemetry payload variants", async () => {
+    const workspace = await createWorkspace();
+    const events: CodexClientEvent[] = [];
+    const client = createClient("payload-variants", workspace, events);
+
+    const first = await client.startSession({
+      prompt: "Use alternate payloads",
+      title: "ABC-123: Example",
+    });
+    const second = await client.continueTurn(
+      "Continue with alternate payloads",
+      "ABC-123: Example",
+    );
+
+    expect(first.status).toBe("completed");
+    expect(second).toMatchObject({
+      status: "completed",
+      usage: {
+        inputTokens: 20,
+        outputTokens: 10,
+        totalTokens: 30,
+      },
+      rateLimits: {
+        requests_remaining: 9,
+        tokens_remaining: 999,
+      },
+    });
+    expect(events.map((event) => event.event)).toContain(
+      "approval_auto_approved",
+    );
+
+    await client.close();
+  });
+
+  it("fails the turn when user-input-required is emitted through a compatible variant", async () => {
+    const workspace = await createWorkspace();
+    const events: CodexClientEvent[] = [];
+    const client = createClient("user-input-variant", workspace, events);
+
+    await expect(
+      client.startSession({
+        prompt: "Need help?",
+        title: "ABC-123: Example",
+      }),
+    ).rejects.toMatchObject({
+      name: "CodexAppServerClientError",
+      code: ERROR_CODES.codexUserInputRequired,
+    } satisfies Partial<CodexAppServerClientError>);
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: "turn_input_required",
+        errorCode: ERROR_CODES.codexUserInputRequired,
+      }),
+    );
+
+    await client.close();
+  });
+
+  it("sends the required initialize, thread/start, and turn/start policy payloads", async () => {
+    const workspace = await createWorkspace();
+    const client = createClient("handshake", workspace, []);
+
+    const result = await client.startSession({
+      prompt: "Inspect startup payloads",
+      title: "ABC-123: Example",
+    });
+
+    expect(result.status).toBe("completed");
+
+    await client.close();
+  });
+
   it("advertises and executes the linear_graphql dynamic tool", async () => {
     const workspace = await createWorkspace();
     const events: CodexClientEvent[] = [];
@@ -219,6 +292,40 @@ describe("CodexAppServerClient", () => {
       expect.objectContaining({
         event: "turn_ended_with_error",
         errorCode: ERROR_CODES.codexTurnTimeout,
+      }),
+    );
+
+    await client.close();
+  });
+
+  it("disables stall detection when stallTimeoutMs is zero", async () => {
+    const workspace = await createWorkspace();
+    const events: CodexClientEvent[] = [];
+    const client = createClient("turn-timeout", workspace, events, {
+      stallTimeoutMs: 0,
+      turnTimeoutMs: 50,
+    });
+
+    await expect(
+      client.startSession({
+        prompt: "Wait for turn timeout",
+        title: "ABC-123: Example",
+      }),
+    ).rejects.toMatchObject({
+      name: "CodexAppServerClientError",
+      code: ERROR_CODES.codexTurnTimeout,
+    } satisfies Partial<CodexAppServerClientError>);
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: "turn_ended_with_error",
+        errorCode: ERROR_CODES.codexTurnTimeout,
+      }),
+    );
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        event: "turn_ended_with_error",
+        errorCode: ERROR_CODES.codexSessionStalled,
       }),
     );
 

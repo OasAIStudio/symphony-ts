@@ -1,6 +1,6 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -91,6 +91,38 @@ Prompt`);
     expect(workflow.workflowPath).toBe(workflowPath);
     expect(workflow.promptTemplate).toBe("Prompt body");
     expect(resolveWorkflowPath(workflowPath)).toBe(workflowPath);
+  });
+
+  it("prefers the explicit workflow path over the cwd default", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "symphony-task3-explicit-"));
+    const otherWorkspace = await mkdtemp(
+      join(tmpdir(), "symphony-task3-other-"),
+    );
+    const explicitPath = join(otherWorkspace, "WORKFLOW.md");
+    await writeFile(explicitPath, "Explicit prompt\n", "utf8");
+    await writeFile(join(workspace, "WORKFLOW.md"), "Default prompt\n", "utf8");
+    const originalCwd = process.cwd();
+
+    try {
+      process.chdir(workspace);
+      const workflow = await loadWorkflowDefinition(explicitPath);
+      expect(workflow.workflowPath).toBe(explicitPath);
+      expect(workflow.promptTemplate).toBe("Explicit prompt");
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  it("resolves the default workflow path from the current working directory", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "symphony-task3-cwd-"));
+    const originalCwd = process.cwd();
+
+    try {
+      process.chdir(workspace);
+      expect(resolveWorkflowPath()).toBe(resolve("WORKFLOW.md"));
+    } finally {
+      process.chdir(originalCwd);
+    }
   });
 
   it("returns a typed missing-workflow error when the file does not exist", async () => {

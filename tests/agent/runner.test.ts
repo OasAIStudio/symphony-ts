@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -128,7 +128,7 @@ describe("AgentRunner", () => {
     expect(prompts[1]).not.toContain("Initial prompt for ABC-123 attempt=2");
   });
 
-  it("fails immediately when before_run fails and does not invoke after_run", async () => {
+  it("fails immediately when before_run fails and still invokes after_run best-effort", async () => {
     const root = await createRoot();
     const hooks = {
       run: vi.fn(async ({ name }: { name: string }) => {
@@ -167,7 +167,67 @@ describe("AgentRunner", () => {
     } satisfies Partial<AgentRunnerError>);
 
     expect(createCodexClient).not.toHaveBeenCalled();
-    expect(hooks.runBestEffort).not.toHaveBeenCalled();
+    expect(hooks.runBestEffort).toHaveBeenCalledWith({
+      name: "afterRun",
+      workspacePath: join(root, "ABC-123"),
+    });
+  });
+
+  it("removes temporary workspace artifacts before each attempt starts", async () => {
+    const root = await createRoot();
+    const workspacePath = join(root, "ABC-123");
+    await mkdir(join(workspacePath, "tmp"), { recursive: true });
+    await mkdir(join(workspacePath, ".elixir_ls"), { recursive: true });
+
+    const hooks = {
+      run: vi.fn(
+        async ({
+          name,
+          workspacePath,
+        }: {
+          name: string;
+          workspacePath: string;
+        }) => {
+          if (name === "beforeRun") {
+            await expect(
+              stat(join(workspacePath, "tmp")),
+            ).rejects.toMatchObject({ code: "ENOENT" });
+            await expect(
+              stat(join(workspacePath, ".elixir_ls")),
+            ).rejects.toMatchObject({
+              code: "ENOENT",
+            });
+          }
+          return true;
+        },
+      ),
+      runBestEffort: vi.fn().mockResolvedValue(true),
+    };
+
+    const runner = new AgentRunner({
+      config: createConfig(root, "unused"),
+      tracker: createTracker({
+        refreshStates: [
+          { id: "issue-1", identifier: "ABC-123", state: "Done" },
+        ],
+      }),
+      hooks: hooks as never,
+      createCodexClient: (input) =>
+        createStubCodexClient([], input, {
+          statuses: ["completed"],
+        }),
+    });
+
+    const result = await runner.run({
+      issue: ISSUE_FIXTURE,
+      attempt: null,
+    });
+
+    expect(result.runAttempt.status).toBe("succeeded");
+    expect(hooks.run).toHaveBeenCalledWith({
+      name: "beforeRun",
+      workspacePath,
+    });
   });
 
   it("closes the session and still runs after_run best-effort when refresh fails", async () => {
@@ -212,6 +272,66 @@ describe("AgentRunner", () => {
       workspacePath: expect.stringContaining("ABC-123"),
     });
   });
+
+  it("cancels the run when the orchestrator aborts the worker signal", async () => {
+    const root = await createRoot();
+    const close = vi.fn().mockResolvedValue(undefined);
+    const controller = new AbortController();
+    const runner = new AgentRunner({
+      config: createConfig(root, "unused"),
+      tracker: createTracker({
+        refreshStates: [
+          { id: "issue-1", identifier: "ABC-123", state: "In Progress" },
+        ],
+      }),
+      createCodexClient: (input) =>
+        createStubCodexClient([], input, {
+          close,
+          startSession: async ({
+            prompt,
+          }: {
+            prompt: string;
+            title: string;
+          }) =>
+            await new Promise((resolve, reject) => {
+              const timeout = setTimeout(() => {
+                resolve({
+                  status: "completed" as const,
+                  threadId: "thread-1",
+                  turnId: "turn-1",
+                  sessionId: "thread-1-turn-1",
+                  usage: null,
+                  rateLimits: null,
+                  message: prompt,
+                });
+              }, 500);
+              controller.signal.addEventListener(
+                "abort",
+                () => {
+                  clearTimeout(timeout);
+                  reject(new Error("Stopped due to terminal_state."));
+                },
+                { once: true },
+              );
+            }),
+        }),
+    });
+
+    const pending = runner.run({
+      issue: ISSUE_FIXTURE,
+      attempt: null,
+      signal: controller.signal,
+    });
+    controller.abort("Stopped due to terminal_state.");
+
+    await expect(pending).rejects.toMatchObject({
+      name: "AgentRunnerError",
+      status: "canceled_by_reconciliation",
+      failedPhase: "launching_agent_process",
+      message: "Stopped due to terminal_state.",
+    } satisfies Partial<AgentRunnerError>);
+    expect(close).toHaveBeenCalled();
+  });
 });
 
 function createStubCodexClient(
@@ -220,13 +340,30 @@ function createStubCodexClient(
   overrides?: Partial<{
     close: ReturnType<typeof vi.fn>;
     statuses: Array<"completed" | "failed" | "cancelled">;
+    startSession: (input: { prompt: string; title: string }) => Promise<{
+      status: "completed" | "failed" | "cancelled";
+      threadId: string;
+      turnId: string;
+      sessionId: string;
+      usage: {
+        inputTokens: number;
+        outputTokens: number;
+        totalTokens: number;
+      } | null;
+      rateLimits: Record<string, unknown> | null;
+      message: string | null;
+    }>;
   }>,
 ) {
   let turn = 0;
   const statuses = overrides?.statuses ?? ["completed"];
 
   return {
-    async startSession({ prompt }: { prompt: string; title: string }) {
+    async startSession({ prompt, title }: { prompt: string; title: string }) {
+      if (overrides?.startSession) {
+        return overrides.startSession({ prompt, title });
+      }
+
       turn += 1;
       prompts.push(prompt);
       input.onEvent({

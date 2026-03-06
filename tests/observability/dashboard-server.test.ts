@@ -214,6 +214,30 @@ describe("dashboard server", () => {
     });
   });
 
+  it("returns snapshot_timed_out when the host snapshot stalls", async () => {
+    const server = await startDashboardServer({
+      port: 0,
+      snapshotTimeoutMs: 25,
+      host: createHost({
+        getRuntimeSnapshot: async () =>
+          await new Promise<RuntimeSnapshot>(() => undefined),
+      }),
+    });
+    servers.push(server);
+
+    const response = await sendRequest(server.port, {
+      method: "GET",
+      path: "/api/v1/state",
+    });
+    expect(response.statusCode).toBe(504);
+    expect(JSON.parse(response.body)).toEqual({
+      error: {
+        code: "snapshot_timed_out",
+        message: "Runtime snapshot timed out after 25ms.",
+      },
+    });
+  });
+
   it("returns a plain 404 for undefined routes", async () => {
     const server = await startDashboardServer({
       port: 0,

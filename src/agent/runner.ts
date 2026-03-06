@@ -1,3 +1,5 @@
+import { rm } from "node:fs/promises";
+
 import {
   CodexAppServerClient,
   type CodexClientEvent,
@@ -70,6 +72,7 @@ export interface AgentRunnerOptions {
 export interface AgentRunInput {
   issue: Issue;
   attempt: number | null;
+  signal?: AbortSignal;
 }
 
 export interface AgentRunResult {
@@ -155,7 +158,6 @@ export class AgentRunner {
     let issue = cloneIssue(input.issue);
     let workspace: Workspace | null = null;
     let client: AgentRunnerCodexClient | null = null;
-    let shouldRunAfterHook = false;
     let lastTurn: CodexTurnResult | null = null;
     let rateLimits: Record<string, unknown> | null = null;
     const liveSession = createEmptyLiveSession();
@@ -167,21 +169,29 @@ export class AgentRunner {
       startedAt: new Date().toISOString(),
       status: "preparing_workspace",
     };
+    const abortController = createAgentAbortController(input.signal);
 
     try {
+      abortController.throwIfAborted({
+        issue,
+        workspace,
+        runAttempt,
+        liveSession,
+      });
+
       workspace = await this.workspaceManager.createForIssue(issue.identifier);
       runAttempt.workspacePath = validateWorkspaceCwd({
         cwd: workspace.path,
         workspacePath: workspace.path,
         workspaceRoot: this.config.workspace.root,
       });
+      await cleanupWorkspaceArtifacts(workspace.path);
       const workspacePath = workspace.path;
 
       await this.hooks.run({
         name: "beforeRun",
         workspacePath: workspace.path,
       });
-      shouldRunAfterHook = true;
 
       runAttempt.status = "launching_agent_process";
       client = this.createCodexClient({
@@ -206,12 +216,19 @@ export class AgentRunner {
           });
         },
       });
+      abortController.bindClient(client);
 
       for (
         let turnNumber = 1;
         turnNumber <= this.config.agent.maxTurns;
         turnNumber += 1
       ) {
+        abortController.throwIfAborted({
+          issue,
+          workspace,
+          runAttempt,
+          liveSession,
+        });
         runAttempt.status = "building_prompt";
         const prompt = await buildTurnPrompt({
           workflow: {
@@ -276,16 +293,19 @@ export class AgentRunner {
         workspace,
         runAttempt,
         liveSession,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
       runAttempt.status = wrapped.status;
       runAttempt.error = wrapped.message;
       throw wrapped;
     } finally {
+      abortController.dispose();
+
       if (client !== null) {
         await closeBestEffort(client);
       }
 
-      if (shouldRunAfterHook && workspace !== null) {
+      if (workspace !== null) {
         await this.hooks.runBestEffort({
           name: "afterRun",
           workspacePath: workspace.path,
@@ -339,9 +359,23 @@ export class AgentRunner {
     workspace: Workspace | null;
     runAttempt: RunAttempt;
     liveSession: LiveSession;
+    signal?: AbortSignal;
   }): AgentRunnerError {
     if (input.error instanceof AgentRunnerError) {
       return input.error;
+    }
+
+    if (input.signal?.aborted) {
+      return new AgentRunnerError({
+        message: toAbortMessage(input.signal.reason),
+        status: "canceled_by_reconciliation",
+        failedPhase: input.runAttempt.status,
+        issue: input.issue,
+        workspace: input.workspace,
+        runAttempt: { ...input.runAttempt },
+        liveSession: { ...input.liveSession },
+        cause: input.error,
+      });
     }
 
     const message =
@@ -366,6 +400,17 @@ export class AgentRunner {
       cause: input.error,
     });
   }
+}
+
+async function cleanupWorkspaceArtifacts(workspacePath: string): Promise<void> {
+  await Promise.all(
+    ["tmp", ".elixir_ls"].map(async (artifactName) => {
+      await rm(`${workspacePath}/${artifactName}`, {
+        force: true,
+        recursive: true,
+      });
+    }),
+  );
 }
 
 function createDefaultCodexClient(
@@ -411,6 +456,84 @@ function cloneIssue(issue: Issue): Issue {
     labels: [...issue.labels],
     blockedBy: issue.blockedBy.map((blocker) => ({ ...blocker })),
   };
+}
+
+function createAgentAbortController(signal: AbortSignal | undefined): {
+  bindClient(client: AgentRunnerCodexClient): void;
+  dispose(): void;
+  throwIfAborted(input: {
+    issue: Issue;
+    workspace: Workspace | null;
+    runAttempt: RunAttempt;
+    liveSession: LiveSession;
+  }): void;
+} {
+  let client: AgentRunnerCodexClient | null = null;
+  let listener: (() => void) | null = null;
+
+  const closeClient = () => {
+    if (client === null) {
+      return;
+    }
+
+    void closeBestEffort(client);
+  };
+
+  if (signal !== undefined) {
+    listener = () => {
+      closeClient();
+    };
+    signal.addEventListener("abort", listener, { once: true });
+  }
+
+  return {
+    bindClient(nextClient) {
+      client = nextClient;
+      if (signal?.aborted) {
+        closeClient();
+      }
+    },
+    dispose() {
+      if (signal !== undefined && listener !== null) {
+        signal.removeEventListener("abort", listener);
+      }
+      listener = null;
+      client = null;
+    },
+    throwIfAborted(input) {
+      if (!signal?.aborted) {
+        return;
+      }
+
+      throw new AgentRunnerError({
+        message: toAbortMessage(signal.reason),
+        status: "canceled_by_reconciliation",
+        failedPhase: input.runAttempt.status,
+        issue: input.issue,
+        workspace: input.workspace,
+        runAttempt: { ...input.runAttempt },
+        liveSession: { ...input.liveSession },
+      });
+    },
+  };
+}
+
+function toAbortMessage(reason: unknown): string {
+  if (typeof reason === "string" && reason.trim().length > 0) {
+    return reason.trim();
+  }
+
+  if (
+    typeof reason === "object" &&
+    reason !== null &&
+    "message" in reason &&
+    typeof reason.message === "string" &&
+    reason.message.trim().length > 0
+  ) {
+    return reason.message.trim();
+  }
+
+  return "Agent run cancelled.";
 }
 
 export type { BuildTurnPromptInput };

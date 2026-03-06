@@ -713,7 +713,7 @@ export class CodexAppServerClient {
   private bumpStallTimer(activeTurn: ActiveTurn): void {
     clearTimeoutIfPresent(activeTurn.stallTimer);
 
-    if (this.options.stallTimeoutMs < 0) {
+    if (this.options.stallTimeoutMs <= 0) {
       activeTurn.stallTimer = null;
       return;
     }

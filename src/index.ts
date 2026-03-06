@@ -1,5 +1,6 @@
 export * from "./agent/prompt-builder.js";
 export * from "./agent/runner.js";
+export * from "./cli/main.js";
 export * from "./config/defaults.js";
 export * from "./config/config-resolver.js";
 export * from "./config/types.js";
@@ -15,6 +16,7 @@ export * from "./logging/session-metrics.js";
 export * from "./logging/structured-logger.js";
 export * from "./observability/dashboard-server.js";
 export * from "./orchestrator/core.js";
+export * from "./orchestrator/runtime-host.js";
 export * from "./workspace/hooks.js";
 export * from "./tracker/errors.js";
 export * from "./tracker/linear-client.js";
