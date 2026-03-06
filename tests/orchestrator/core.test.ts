@@ -201,6 +201,46 @@ describe("orchestrator core", () => {
     expect(computeFailureRetryDelayMs(3, 30_000)).toBe(30_000);
   });
 
+  it("applies codex session events to the running entry and aggregate counters", async () => {
+    const orchestrator = createOrchestrator();
+
+    await orchestrator.pollTick();
+    const result = orchestrator.onCodexEvent({
+      issueId: "1",
+      event: {
+        event: "turn_completed",
+        timestamp: "2026-03-06T00:00:04.000Z",
+        codexAppServerPid: "1001",
+        sessionId: "thread-1-turn-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        usage: {
+          inputTokens: 13,
+          outputTokens: 8,
+          totalTokens: 21,
+        },
+        rateLimits: {
+          requestsRemaining: 9,
+        },
+        message: "turn completed",
+      },
+    });
+
+    expect(result).toEqual({ applied: true });
+    expect(orchestrator.getState().running["1"]).toMatchObject({
+      sessionId: "thread-1-turn-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      lastCodexEvent: "turn_completed",
+      lastCodexMessage: "turn completed",
+      codexTotalTokens: 21,
+    });
+    expect(orchestrator.getState().codexTotals.totalTokens).toBe(21);
+    expect(orchestrator.getState().codexRateLimits).toEqual({
+      requestsRemaining: 9,
+    });
+  });
+
   it("requeues retry timers when slots are exhausted", async () => {
     const timers = createFakeTimerScheduler();
     const tracker = createTracker({

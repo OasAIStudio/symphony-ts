@@ -1,3 +1,4 @@
+import type { CodexClientEvent } from "../codex/app-server-client.js";
 import { validateDispatchConfig } from "../config/config-resolver.js";
 import type {
   DispatchValidationResult,
@@ -12,7 +13,10 @@ import {
   createInitialOrchestratorState,
   normalizeIssueState,
 } from "../domain/model.js";
-import { addEndedSessionRuntime } from "../logging/session-metrics.js";
+import {
+  addEndedSessionRuntime,
+  applyCodexEventToOrchestratorState,
+} from "../logging/session-metrics.js";
 import type { IssueStateSnapshot, IssueTracker } from "../tracker/tracker.js";
 
 const CONTINUATION_RETRY_DELAY_MS = 1_000;
@@ -46,6 +50,10 @@ export interface RetryTimerResult {
   dispatched: boolean;
   released: boolean;
   retryEntry: RetryEntry | null;
+}
+
+export interface CodexEventResult {
+  applied: boolean;
 }
 
 export interface TimerScheduler {
@@ -323,6 +331,19 @@ export class OrchestratorCore {
         delayType: "failure",
       },
     );
+  }
+
+  onCodexEvent(input: {
+    issueId: string;
+    event: CodexClientEvent;
+  }): CodexEventResult {
+    const runningEntry = this.state.running[input.issueId];
+    if (runningEntry === undefined) {
+      return { applied: false };
+    }
+
+    applyCodexEventToOrchestratorState(this.state, runningEntry, input.event);
+    return { applied: true };
   }
 
   private syncStateFromConfig(): void {

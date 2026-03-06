@@ -15,6 +15,7 @@ export * from "./logging/session-metrics.js";
 export * from "./logging/structured-logger.js";
 export * from "./observability/dashboard-server.js";
 export * from "./orchestrator/core.js";
+export * from "./orchestrator/runtime-host.js";
 export * from "./workspace/hooks.js";
 export * from "./tracker/errors.js";
 export * from "./tracker/linear-client.js";

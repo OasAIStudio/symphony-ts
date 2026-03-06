@@ -212,6 +212,55 @@ describe("AgentRunner", () => {
       workspacePath: expect.stringContaining("ABC-123"),
     });
   });
+
+  it("cancels the active run when aborted externally", async () => {
+    const root = await createRoot();
+    const close = vi.fn().mockResolvedValue(undefined);
+    const controller = new AbortController();
+    const runner = new AgentRunner({
+      config: createConfig(root, "unused"),
+      tracker: createTracker(),
+      createCodexClient: (input) => ({
+        async startSession({ prompt, title }) {
+          return await new Promise((resolve, reject) => {
+            input.onEvent({
+              event: "session_started",
+              timestamp: new Date("2026-03-06T00:00:00.000Z").toISOString(),
+              codexAppServerPid: "1001",
+              sessionId: "thread-1-turn-1",
+              threadId: "thread-1",
+              turnId: "turn-1",
+            });
+            controller.signal.addEventListener(
+              "abort",
+              () => {
+                reject(new Error("Stopped due to terminal_state."));
+              },
+              { once: true },
+            );
+          });
+        },
+        async continueTurn() {
+          throw new Error("unexpected continuation turn");
+        },
+        close,
+      }),
+    });
+
+    const pending = runner.run({
+      issue: ISSUE_FIXTURE,
+      attempt: null,
+      signal: controller.signal,
+    });
+    controller.abort("Stopped due to terminal_state.");
+
+    await expect(pending).rejects.toMatchObject({
+      name: "AgentRunnerError",
+      status: "canceled_by_reconciliation",
+      message: "Stopped due to terminal_state.",
+    } satisfies Partial<AgentRunnerError>);
+    expect(close).toHaveBeenCalled();
+  });
 });
 
 function createStubCodexClient(
