@@ -1,22 +1,10 @@
-# Symphony
+# Symphony-ts
 
-**Symphony turns project work into isolated, autonomous implementation runs, so teams can manage work instead of supervising coding agents.**
+**This project is an unofficial TypeScript implementation of [OpenAI Symphony](https://github.com/openai/symphony).**
 
-> Harness Engineering is exactly what I want!
-> Not vibe coding. Not just giving OpenClaw a sentence and asking it to orchestrate the rest.
-
-`symphony-ts` is a TypeScript implementation of the original
-[openai/symphony](https://github.com/openai/symphony) project.
-
-It starts with Linear and is designed to support additional tracker platforms over time.
-
-It is an orchestration service for agent-driven software delivery: it reads work from your tracker,
-creates a dedicated workspace for each issue, runs a coding agent inside that boundary, and gives
-operators a clean surface for runtime visibility, retries, and control.
-
-It works best in codebases that have adopted
-[harness engineering](https://openai.com/index/harness-engineering/). Symphony is the next step:
-moving from managing coding agents to managing work that needs to get done.
+Symphony-ts turns project work into isolated, autonomous implementation runs: it reads work from
+your tracker, creates a dedicated workspace for each issue, runs a coding agent inside that
+boundary, and gives operators a clean surface for runtime visibility, retries, and control.
 
 > [!WARNING]
 > Symphony is intended for trusted environments.
