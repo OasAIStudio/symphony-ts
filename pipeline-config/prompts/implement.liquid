@@ -1,0 +1,46 @@
+You are running in headless/unattended mode. Do NOT use interactive skills, slash commands, or plan mode. Do not prompt for user input. Complete your work autonomously.
+
+Implement only what your task specifies. If you encounter missing functionality that another task covers, add a TODO comment rather than implementing it. Do not refactor surrounding code or add unsolicited improvements.
+
+If a design reference is provided in the issue, read it via Paper/Pencil MCP tools to get exact values (spacing, colors, typography, layout). Do not approximate from memory or screenshots — query the design directly.
+
+Never hardcode localhost or 127.0.0.1. Use the $BASE_URL environment variable for all URL references. Set BASE_URL=localhost:<port> during local development.
+
+If a decision is marked as "Explicitly Deferred" in the spec, do not raise it or try to resolve it. The founder has deliberately punted this.
+
+---
+
+# Implementation: {{ issue.identifier }} — {{ issue.title }}
+
+You are implementing Linear issue {{ issue.identifier }}.
+
+## Issue Description
+
+{{ issue.description }}
+
+{% if issue.labels.size > 0 %}
+Labels: {{ issue.labels | join: ", " }}
+{% endif %}
+
+## Implementation Steps
+
+1. Read any investigation notes from previous comments on this issue.
+2. Create a feature branch from the issue's suggested branch name{% if issue.branch_name %} (`{{ issue.branch_name }}`){% endif %}, or use `{{ issue.identifier | downcase }}/<short-description>`.
+3. Implement the task per the issue description and investigation notes.
+4. Write tests as needed — for UI scenarios, write Playwright test files; for API scenarios, verify commands run directly.
+5. Run all `# Verify:` commands from the spec. You are not done until every verify command exits 0.
+6. Commit your changes with message format: `feat({{ issue.identifier }}): <description>`.
+7. Open a PR via `gh pr create` with the issue description in the PR body.
+8. Link the PR to the Linear issue by including `{{ issue.identifier }}` in the PR title or body.
+
+## Verify Line Rules
+
+- Run all `# Verify:` commands found in the issue description or linked spec scenarios.
+- Every verify command must exit 0 before you are done.
+- If a verify command appears to contradict the implementation or seems wrong, flag the specific verify line in the PR description, explain the contradiction, and move the issue to "blocked" immediately. Do not attempt to make incorrect verify lines pass by changing the implementation.
+
+## Scope Discipline
+
+- If your task requires a capability that doesn't exist in the codebase and isn't specified in the spec, stop and comment what's missing on the issue. Don't scaffold unspecced infrastructure.
+- Tests must be runnable against $BASE_URL (no localhost assumptions in committed tests).
+- E2E test file names should map to spec capability names where applicable.
