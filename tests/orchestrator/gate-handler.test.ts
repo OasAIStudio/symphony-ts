@@ -47,6 +47,30 @@ describe("aggregateVerdicts", () => {
     ];
     expect(aggregateVerdicts(results)).toBe("fail");
   });
+
+  it("returns pass when one reviewer passes and another errors", () => {
+    const results = [
+      createResult({ verdict: "pass" }),
+      createResult({ verdict: "error" }),
+    ];
+    expect(aggregateVerdicts(results)).toBe("pass");
+  });
+
+  it("returns fail when all reviewers error (no review occurred)", () => {
+    const results = [
+      createResult({ verdict: "error" }),
+      createResult({ verdict: "error" }),
+    ];
+    expect(aggregateVerdicts(results)).toBe("fail");
+  });
+
+  it("returns fail when one reviewer fails and another errors", () => {
+    const results = [
+      createResult({ verdict: "fail" }),
+      createResult({ verdict: "error" }),
+    ];
+    expect(aggregateVerdicts(results)).toBe("fail");
+  });
 });
 
 describe("parseReviewerOutput", () => {
@@ -222,7 +246,7 @@ describe("runEnsembleGate", () => {
     expect(result.results).toHaveLength(2);
   });
 
-  it("treats reviewer errors as fail verdicts", async () => {
+  it("treats reviewer infrastructure errors as error verdicts (not fail)", async () => {
     const result = await runEnsembleGate({
       issue: createIssue(),
       stage: createGateStage({
@@ -236,12 +260,49 @@ describe("runEnsembleGate", () => {
         ],
       }),
       createReviewerClient: () => createErrorClient("Connection timeout"),
+      retryBaseDelayMs: 0,
     });
 
+    // All reviewers errored → aggregate is fail (can't skip review)
     expect(result.aggregate).toBe("fail");
     expect(result.results).toHaveLength(1);
-    expect(result.results[0]!.verdict.verdict).toBe("fail");
+    expect(result.results[0]!.verdict.verdict).toBe("error");
     expect(result.results[0]!.feedback).toContain("Connection timeout");
+  });
+
+  it("passes gate when one reviewer passes and another errors", async () => {
+    const result = await runEnsembleGate({
+      issue: createIssue(),
+      stage: createGateStage({
+        reviewers: [
+          {
+            runner: "codex",
+            model: "gpt-5.3-codex",
+            role: "adversarial-reviewer",
+            prompt: null,
+          },
+          {
+            runner: "gemini",
+            model: "gemini-2.5-pro",
+            role: "security-reviewer",
+            prompt: null,
+          },
+        ],
+      }),
+      createReviewerClient: (reviewer) => {
+        if (reviewer.role === "security-reviewer") {
+          return createErrorClient("Rate limit exceeded");
+        }
+        return createMockClient(
+          `{"role": "adversarial-reviewer", "model": "gpt-5.3-codex", "verdict": "pass"}\n\nLooks good.`,
+        );
+      },
+      retryBaseDelayMs: 0,
+    });
+
+    // One pass + one error = pass (error doesn't block)
+    expect(result.aggregate).toBe("pass");
+    expect(result.results).toHaveLength(2);
   });
 
   it("posts aggregated comment to tracker", async () => {
@@ -335,10 +396,12 @@ describe("runEnsembleGate", () => {
         ],
       }),
       createReviewerClient: createClient,
+      retryBaseDelayMs: 0,
     });
 
-    expect(closeCalls).toContain("r1");
-    expect(closeCalls).toContain("r2");
+    // With retries, close is called once per attempt per reviewer
+    expect(closeCalls.filter(c => c === "r1").length).toBeGreaterThanOrEqual(1);
+    expect(closeCalls.filter(c => c === "r2").length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -562,7 +625,7 @@ describe("config resolver parses reviewers", () => {
 // --- Test Helpers ---
 
 function createResult(overrides?: {
-  verdict?: "pass" | "fail";
+  verdict?: "pass" | "fail" | "error";
   role?: string;
   feedback?: string;
 }): ReviewerResult {

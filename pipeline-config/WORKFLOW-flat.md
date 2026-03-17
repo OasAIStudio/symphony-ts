@@ -97,3 +97,12 @@ Labels: {{ issue.labels | join: ", " }}
 
 - If your task requires a capability that doesn't exist in the codebase and isn't specified in the spec, stop and comment what's missing on the issue. Don't scaffold unspecced infrastructure.
 - Tests must be runnable against $BASE_URL (no localhost assumptions in committed tests).
+
+## Documentation Maintenance
+
+- If you add a new module, API endpoint, or significant abstraction, update the relevant docs/ file and the AGENTS.md Documentation Map entry. If no relevant doc exists, create one following the docs/ conventions (# Title, > Last updated header).
+- If a docs/ file you reference during implementation is stale or missing, update/create it as part of your implementation. Include the update in the same PR as your code changes — never in a separate PR.
+- If you make a non-obvious architectural decision during implementation, create a design doc in docs/design-docs/ following the ADR format (numbered, with Status line). Add it to the AGENTS.md design docs table.
+- When you complete your implementation, update the > Last updated date on any docs/ file you modified.
+- Do not update docs/generated/ files — those are auto-generated and will be overwritten.
+- Commit doc updates in the same PR as code changes, not separately.

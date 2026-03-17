@@ -99,3 +99,39 @@ export const LINEAR_ISSUE_STATES_BY_IDS_QUERY = `
     }
   }
 `.trim();
+
+export const LINEAR_WORKFLOW_STATES_QUERY = `
+  query SymphonyWorkflowStates($teamId: String!) {
+    workflowStates(filter: { team: { key: { eq: $teamId } } }) {
+      nodes {
+        id
+        name
+      }
+    }
+  }
+`.trim();
+
+export const LINEAR_ISSUE_UPDATE_MUTATION = `
+  mutation SymphonyIssueUpdate($issueId: String!, $stateId: String!) {
+    issueUpdate(id: $issueId, input: { stateId: $stateId }) {
+      success
+      issue {
+        id
+        state {
+          name
+        }
+      }
+    }
+  }
+`.trim();
+
+export const LINEAR_CREATE_COMMENT_MUTATION = `
+  mutation SymphonyCreateComment($issueId: String!, $body: String!) {
+    commentCreate(input: { issueId: $issueId, body: $body }) {
+      success
+      comment {
+        id
+      }
+    }
+  }
+`.trim();

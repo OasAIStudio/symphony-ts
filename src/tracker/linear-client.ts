@@ -11,8 +11,11 @@ import {
 } from "./linear-normalize.js";
 import {
   LINEAR_CANDIDATE_ISSUES_QUERY,
-  LINEAR_ISSUES_BY_STATES_QUERY,
+  LINEAR_CREATE_COMMENT_MUTATION,
   LINEAR_ISSUE_STATES_BY_IDS_QUERY,
+  LINEAR_ISSUE_UPDATE_MUTATION,
+  LINEAR_ISSUES_BY_STATES_QUERY,
+  LINEAR_WORKFLOW_STATES_QUERY,
 } from "./linear-queries.js";
 import type { IssueStateSnapshot, IssueTracker } from "./tracker.js";
 
@@ -45,6 +48,26 @@ type LinearStatesData = LinearCandidateData;
 interface LinearIssueStatesData {
   issues?: {
     nodes?: unknown;
+  };
+}
+
+interface LinearIssueUpdateData {
+  issueUpdate?: {
+    success?: boolean;
+    issue?: { id?: string; state?: { name?: string } };
+  };
+}
+
+interface LinearCommentCreateData {
+  commentCreate?: {
+    success?: boolean;
+    comment?: { id?: string };
+  };
+}
+
+interface LinearWorkflowStatesData {
+  workflowStates?: {
+    nodes?: Array<{ id?: string; name?: string }>;
   };
 }
 
@@ -124,6 +147,67 @@ export class LinearTrackerClient implements IssueTracker {
     }
 
     return nodes.map((node) => normalizeLinearIssueState(node));
+  }
+
+  async postComment(issueId: string, body: string): Promise<void> {
+    const response = await this.postGraphql<LinearCommentCreateData>(
+      LINEAR_CREATE_COMMENT_MUTATION,
+      { issueId, body },
+    );
+
+    if (response.commentCreate?.success !== true) {
+      throw new TrackerError(
+        ERROR_CODES.linearGraphqlErrors,
+        "Linear commentCreate mutation did not return success.",
+        { details: response },
+      );
+    }
+  }
+
+  async updateIssueState(
+    issueId: string,
+    stateName: string,
+    teamKey: string,
+  ): Promise<void> {
+    const statesResponse = await this.postGraphql<LinearWorkflowStatesData>(
+      LINEAR_WORKFLOW_STATES_QUERY,
+      { teamId: teamKey },
+    );
+
+    const states = statesResponse.workflowStates?.nodes;
+    if (!Array.isArray(states)) {
+      throw new TrackerError(
+        ERROR_CODES.linearUnknownPayload,
+        "Linear workflowStates payload was missing nodes.",
+        { details: statesResponse },
+      );
+    }
+
+    const targetState = states.find(
+      (s) =>
+        typeof s.name === "string" &&
+        s.name.toLowerCase() === stateName.toLowerCase(),
+    );
+    if (!targetState || typeof targetState.id !== "string") {
+      throw new TrackerError(
+        ERROR_CODES.linearUnknownPayload,
+        `Linear workflow state "${stateName}" not found for team "${teamKey}".`,
+        { details: { states, targetStateName: stateName } },
+      );
+    }
+
+    const updateResponse = await this.postGraphql<LinearIssueUpdateData>(
+      LINEAR_ISSUE_UPDATE_MUTATION,
+      { issueId, stateId: targetState.id },
+    );
+
+    if (updateResponse.issueUpdate?.success !== true) {
+      throw new TrackerError(
+        ERROR_CODES.linearGraphqlErrors,
+        "Linear issueUpdate mutation did not return success.",
+        { details: updateResponse },
+      );
+    }
   }
 
   async executeRawGraphql(

@@ -293,6 +293,202 @@ describe("AgentRunner", () => {
     });
   });
 
+  it("removes existing workspace on fresh dispatch at initial stage", async () => {
+    const root = await createRoot();
+    const workspacePath = join(root, "issue-1");
+    const removeForIssue = vi.fn().mockResolvedValue(true);
+    const createForIssue = vi.fn().mockResolvedValue({
+      path: workspacePath,
+      workspaceKey: "issue-1",
+      createdNow: true,
+    });
+    const mockWorkspaceManager = {
+      root,
+      createForIssue,
+      removeForIssue,
+      resolveForIssue: vi.fn(),
+    };
+    const config = createConfig(root, "unused");
+    config.stages = {
+      initialStage: "investigate",
+      stages: {
+        investigate: { type: "agent", runner: null, model: null, prompt: null, maxTurns: 3, timeoutMs: null, concurrency: null, gateType: null, maxRework: null, reviewers: [], transitions: { onComplete: "done", onApprove: null, onRework: null } },
+        done: { type: "terminal", runner: null, model: null, prompt: null, maxTurns: null, timeoutMs: null, concurrency: null, gateType: null, maxRework: null, reviewers: [], transitions: { onComplete: null, onApprove: null, onRework: null } },
+      },
+    };
+    const runner = new AgentRunner({
+      config,
+      tracker: createTracker({
+        refreshStates: [
+          { id: "issue-1", identifier: "ABC-123", state: "Done" },
+        ],
+      }),
+      workspaceManager: mockWorkspaceManager as never,
+      createCodexClient: (input) =>
+        createStubCodexClient([], input, {
+          statuses: ["completed"],
+        }),
+    });
+
+    await runner.run({
+      issue: ISSUE_FIXTURE,
+      attempt: null,
+      stageName: "investigate",
+    });
+
+    expect(removeForIssue).toHaveBeenCalledWith("issue-1");
+    expect(createForIssue).toHaveBeenCalledWith("issue-1");
+  });
+
+  it("does NOT remove workspace on flat dispatch (no stages)", async () => {
+    const root = await createRoot();
+    const workspacePath = join(root, "issue-1");
+    const removeForIssue = vi.fn().mockResolvedValue(true);
+    const createForIssue = vi.fn().mockResolvedValue({
+      path: workspacePath,
+      workspaceKey: "issue-1",
+      createdNow: false,
+    });
+    const mockWorkspaceManager = {
+      root,
+      createForIssue,
+      removeForIssue,
+      resolveForIssue: vi.fn(),
+    };
+    const runner = new AgentRunner({
+      config: createConfig(root, "unused"),
+      tracker: createTracker({
+        refreshStates: [
+          { id: "issue-1", identifier: "ABC-123", state: "Done" },
+        ],
+      }),
+      workspaceManager: mockWorkspaceManager as never,
+      createCodexClient: (input) =>
+        createStubCodexClient([], input, {
+          statuses: ["completed"],
+        }),
+    });
+
+    await runner.run({
+      issue: ISSUE_FIXTURE,
+      attempt: null,
+    });
+
+    expect(removeForIssue).not.toHaveBeenCalled();
+    expect(createForIssue).toHaveBeenCalledWith("issue-1");
+  });
+
+  it("does NOT remove workspace on continuation (attempt !== null)", async () => {
+    const root = await createRoot();
+    const workspacePath = join(root, "issue-1");
+    const removeForIssue = vi.fn().mockResolvedValue(true);
+    const createForIssue = vi.fn().mockResolvedValue({
+      path: workspacePath,
+      workspaceKey: "issue-1",
+      createdNow: false,
+    });
+    const mockWorkspaceManager = {
+      root,
+      createForIssue,
+      removeForIssue,
+      resolveForIssue: vi.fn(),
+    };
+    const runner = new AgentRunner({
+      config: createConfig(root, "unused"),
+      tracker: createTracker({
+        refreshStates: [
+          { id: "issue-1", identifier: "ABC-123", state: "Done" },
+        ],
+      }),
+      workspaceManager: mockWorkspaceManager as never,
+      createCodexClient: (input) =>
+        createStubCodexClient([], input, {
+          statuses: ["completed"],
+        }),
+    });
+
+    await runner.run({
+      issue: ISSUE_FIXTURE,
+      attempt: 1,
+    });
+
+    expect(removeForIssue).not.toHaveBeenCalled();
+    expect(createForIssue).toHaveBeenCalledWith("issue-1");
+  });
+
+  it("breaks the turn loop early when the agent emits [STAGE_COMPLETE]", async () => {
+    const root = await createRoot();
+    const tracker = createTracker({
+      refreshStates: [
+        // Would keep going if not for early exit — issue stays active
+        { id: "issue-1", identifier: "ABC-123", state: "In Progress" },
+        { id: "issue-1", identifier: "ABC-123", state: "In Progress" },
+      ],
+    });
+    const runner = new AgentRunner({
+      config: createConfig(root, "unused"),
+      tracker,
+      createCodexClient: (input) => {
+        let turn = 0;
+        return {
+          async startSession({ prompt }: { prompt: string; title: string }) {
+            turn += 1;
+            input.onEvent({
+              event: "session_started",
+              timestamp: new Date().toISOString(),
+              codexAppServerPid: "1001",
+              sessionId: `thread-1-turn-${turn}`,
+              threadId: "thread-1",
+              turnId: `turn-${turn}`,
+            });
+            return {
+              status: "completed" as const,
+              threadId: "thread-1",
+              turnId: `turn-${turn}`,
+              sessionId: `thread-1-turn-${turn}`,
+              usage: null,
+              rateLimits: null,
+              message: `Done with investigation.\n[STAGE_COMPLETE]`,
+            };
+          },
+          async continueTurn(prompt: string) {
+            turn += 1;
+            input.onEvent({
+              event: "session_started",
+              timestamp: new Date().toISOString(),
+              codexAppServerPid: "1001",
+              sessionId: `thread-1-turn-${turn}`,
+              threadId: "thread-1",
+              turnId: `turn-${turn}`,
+            });
+            return {
+              status: "completed" as const,
+              threadId: "thread-1",
+              turnId: `turn-${turn}`,
+              sessionId: `thread-1-turn-${turn}`,
+              usage: null,
+              rateLimits: null,
+              message: `turn ${turn}`,
+            };
+          },
+          close: vi.fn().mockResolvedValue(undefined),
+        };
+      },
+    });
+
+    const result = await runner.run({
+      issue: ISSUE_FIXTURE,
+      attempt: null,
+      stageName: "investigate",
+    });
+
+    // maxTurns is 3, but should break after turn 1 due to [STAGE_COMPLETE]
+    expect(result.turnsCompleted).toBe(1);
+    expect(result.runAttempt.status).toBe("succeeded");
+    // refreshIssueState should NOT have been called since we broke before it
+    expect(tracker.fetchIssueStatesByIds).not.toHaveBeenCalled();
+  });
+
   it("cancels the run when the orchestrator aborts the worker signal", async () => {
     const root = await createRoot();
     const close = vi.fn().mockResolvedValue(undefined);

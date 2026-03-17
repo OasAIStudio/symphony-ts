@@ -3,10 +3,10 @@ import { access, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Writable } from "node:stream";
 
-import type { AgentRunResult, AgentRunnerEvent } from "../agent/runner.js";
+import type { AgentRunInput, AgentRunResult, AgentRunnerEvent } from "../agent/runner.js";
 import { AgentRunner } from "../agent/runner.js";
 import { validateDispatchConfig } from "../config/config-resolver.js";
-import type { ResolvedWorkflowConfig } from "../config/types.js";
+import type { ResolvedWorkflowConfig, StageDefinition } from "../config/types.js";
 import { WorkflowWatcher } from "../config/workflow-watch.js";
 import type { Issue, RetryEntry, RunningEntry } from "../domain/model.js";
 import { ERROR_CODES } from "../errors/codes.js";
@@ -25,6 +25,8 @@ import {
   type RefreshResponse,
   startDashboardServer,
 } from "../observability/dashboard-server.js";
+import { createRunnerFromConfig, isAiSdkRunner } from "../runners/factory.js";
+import type { RunnerKind } from "../runners/types.js";
 import { LinearTrackerClient } from "../tracker/linear-client.js";
 import type { IssueTracker } from "../tracker/tracker.js";
 import { WorkspaceHookRunner } from "../workspace/hooks.js";
@@ -35,13 +37,10 @@ import type {
   TimerScheduler,
 } from "./core.js";
 import { OrchestratorCore } from "./core.js";
+import { runEnsembleGate } from "./gate-handler.js";
 
 export interface AgentRunnerLike {
-  run(input: {
-    issue: Issue;
-    attempt: number | null;
-    signal?: AbortSignal;
-  }): Promise<AgentRunResult>;
+  run(input: AgentRunInput): Promise<AgentRunResult>;
 }
 
 export interface RuntimeHostOptions {
@@ -166,8 +165,8 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
       tracker: options.tracker,
       now: this.now,
       timerScheduler,
-      spawnWorker: async ({ issue, attempt }) =>
-        this.spawnWorkerExecution(issue, attempt),  // stage/stageName available but not used by runtime-host yet
+      spawnWorker: async ({ issue, attempt, stage, stageName }) =>
+        this.spawnWorkerExecution(issue, attempt, stage, stageName),
       stopRunningIssue: async (input) => {
         await this.stopWorkerExecution(input.issueId, {
           issueId: input.issueId,
@@ -175,6 +174,35 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
           cleanupWorkspace: input.cleanupWorkspace,
           reason: input.reason,
         });
+      },
+      runEnsembleGate: async ({ issue, stage }) => {
+        const workspaceInfo = this.workspaceManager.resolveForIssue(issue.id);
+        const gateOptions = {
+          issue,
+          stage,
+          workspacePath: workspaceInfo.workspacePath,
+          createReviewerClient: (reviewer: import("../config/types.js").ReviewerDefinition) => {
+            const kind = (reviewer.runner ?? options.config.runner.kind) as RunnerKind;
+            if (!isAiSdkRunner(kind)) {
+              throw new Error(`Reviewer runner kind "${kind}" is not an AI SDK runner — only claude-code and gemini are supported for ensemble review.`);
+            }
+            return createRunnerFromConfig({
+              config: { kind, model: reviewer.model },
+              cwd: workspaceInfo.workspacePath,
+              onEvent: () => {},
+            });
+          },
+        };
+        if (this.tracker instanceof LinearTrackerClient) {
+          const tracker = this.tracker;
+          return runEnsembleGate({
+            ...gateOptions,
+            postComment: async (issueId: string, body: string) => {
+              await tracker.postComment(issueId, body);
+            },
+          });
+        }
+        return runEnsembleGate(gateOptions);
       },
     };
 
@@ -301,6 +329,8 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
   private async spawnWorkerExecution(
     issue: Issue,
     attempt: number | null,
+    stage: StageDefinition | null = null,
+    stageName: string | null = null,
   ): Promise<{
     workerHandle: WorkerExecution;
     monitorHandle: Promise<void>;
@@ -311,6 +341,7 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
       issue_identifier: issue.identifier,
       attempt,
       state: issue.state,
+      ...(stageName !== null ? { stage: stageName } : {}),
     });
 
     const controller = new AbortController();
@@ -328,6 +359,8 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
         issue,
         attempt,
         signal: controller.signal,
+        stage,
+        stageName,
       })
       .then(async (result) => {
         execution.lastResult = result;

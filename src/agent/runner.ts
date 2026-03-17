@@ -7,7 +7,7 @@ import {
   type CodexTurnResult,
 } from "../codex/app-server-client.js";
 import { createLinearGraphqlDynamicTool } from "../codex/linear-graphql-tool.js";
-import type { ResolvedWorkflowConfig } from "../config/types.js";
+import type { ResolvedWorkflowConfig, StageDefinition } from "../config/types.js";
 import { createRunnerFromConfig, isAiSdkRunner } from "../runners/factory.js";
 import type { RunnerKind } from "../runners/types.js";
 import {
@@ -75,6 +75,8 @@ export interface AgentRunInput {
   issue: Issue;
   attempt: number | null;
   signal?: AbortSignal;
+  stage?: StageDefinition | null;
+  stageName?: string | null;
 }
 
 export interface AgentRunResult {
@@ -177,6 +179,13 @@ export class AgentRunner {
     };
     const abortController = createAgentAbortController(input.signal);
 
+    // Resolve effective config from stage overrides, falling back to global
+    const stage = input.stage ?? null;
+    const effectiveRunnerKind = (stage?.runner ?? this.config.runner.kind) as RunnerKind;
+    const effectiveModel = stage?.model ?? this.config.runner.model;
+    const effectiveMaxTurns = stage?.maxTurns ?? this.config.agent.maxTurns;
+    const effectivePromptTemplate = stage?.prompt ?? this.config.promptTemplate;
+
     try {
       abortController.throwIfAborted({
         issue,
@@ -184,6 +193,17 @@ export class AgentRunner {
         runAttempt,
         liveSession,
       });
+
+      // On fresh dispatch with stages at the initial stage, remove stale workspace
+      // for a clean start.  For flat dispatch (no stages) or continuation attempts,
+      // preserve the workspace so interrupted work survives restarts.
+      if (input.attempt === null && input.stageName !== null && input.stageName === (this.config.stages?.initialStage ?? null)) {
+        try {
+          await this.workspaceManager.removeForIssue(issue.id);
+        } catch {
+          // Best-effort: workspace may not exist
+        }
+      }
 
       workspace = await this.workspaceManager.createForIssue(issue.id);
       runAttempt.workspacePath = validateWorkspaceCwd({
@@ -200,7 +220,15 @@ export class AgentRunner {
       });
 
       runAttempt.status = "launching_agent_process";
-      client = this.createCodexClient({
+      const effectiveClientFactory = isAiSdkRunner(effectiveRunnerKind)
+        ? (factoryInput: AgentRunnerCodexClientFactoryInput) =>
+            createRunnerFromConfig({
+              config: { kind: effectiveRunnerKind, model: effectiveModel },
+              cwd: factoryInput.cwd,
+              onEvent: factoryInput.onEvent,
+            })
+        : this.createCodexClient;
+      client = effectiveClientFactory({
         command: this.config.codex.command,
         cwd: workspace.path,
         approvalPolicy: this.config.codex.approvalPolicy,
@@ -226,7 +254,7 @@ export class AgentRunner {
 
       for (
         let turnNumber = 1;
-        turnNumber <= this.config.agent.maxTurns;
+        turnNumber <= effectiveMaxTurns;
         turnNumber += 1
       ) {
         abortController.throwIfAborted({
@@ -238,12 +266,13 @@ export class AgentRunner {
         runAttempt.status = "building_prompt";
         const prompt = await buildTurnPrompt({
           workflow: {
-            promptTemplate: this.config.promptTemplate,
+            promptTemplate: effectivePromptTemplate,
           },
           issue,
           attempt: input.attempt,
+          stageName: input.stageName ?? null,
           turnNumber,
-          maxTurns: this.config.agent.maxTurns,
+          maxTurns: effectiveMaxTurns,
         });
         const title = `${issue.identifier}: ${issue.title}`;
 
@@ -273,6 +302,11 @@ export class AgentRunner {
             : { rateLimits: lastTurn.rateLimits }),
           ...(lastTurn.message === null ? {} : { message: lastTurn.message }),
         });
+
+        // Early exit: agent signaled stage completion
+        if (lastTurn.message !== null && lastTurn.message.trimEnd().endsWith("[STAGE_COMPLETE]")) {
+          break;
+        }
 
         runAttempt.status = "finishing";
         issue = await this.refreshIssueState(issue);

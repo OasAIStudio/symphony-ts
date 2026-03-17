@@ -438,7 +438,8 @@ export class OrchestratorCore {
         }
       }
     } catch {
-      // Gate handler failure — leave issue in gate state for manual intervention.
+      // Gate handler failure — release claim so the issue can be retried on next poll.
+      this.releaseClaim(issue.id);
     }
   }
 
@@ -608,6 +609,7 @@ export class OrchestratorCore {
 
       if (stage !== null && stage.type === "gate") {
         this.state.issueStages[issue.id] = stageName;
+        this.state.claimed.add(issue.id);
 
         if (
           stage.gateType === "ensemble" &&

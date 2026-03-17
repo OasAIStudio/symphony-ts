@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+
 import type { AgentRunnerCodexClient } from "../agent/runner.js";
 import type { CodexTurnResult } from "../codex/app-server-client.js";
 import type { ReviewerDefinition, StageDefinition } from "../config/types.js";
@@ -5,11 +7,13 @@ import type { Issue } from "../domain/model.js";
 
 /**
  * Single reviewer verdict — the minimal JSON layer of the two-layer output.
+ * "error" means the reviewer failed to execute (rate limit, network, etc.)
+ * and should not count as a code review failure.
  */
 export interface ReviewerVerdict {
   role: string;
   model: string;
-  verdict: "pass" | "fail";
+  verdict: "pass" | "fail" | "error";
 }
 
 /**
@@ -48,6 +52,9 @@ export interface EnsembleGateHandlerOptions {
   stage: StageDefinition;
   createReviewerClient: CreateReviewerClient;
   postComment?: PostComment;
+  workspacePath?: string;
+  /** Override retry base delay (ms) for testing. Default: 5000. */
+  retryBaseDelayMs?: number;
 }
 
 /**
@@ -56,7 +63,7 @@ export interface EnsembleGateHandlerOptions {
 export async function runEnsembleGate(
   options: EnsembleGateHandlerOptions,
 ): Promise<EnsembleGateResult> {
-  const { issue, stage, createReviewerClient, postComment } = options;
+  const { issue, stage, createReviewerClient, postComment, workspacePath } = options;
   const reviewers = stage.reviewers;
 
   if (reviewers.length === 0) {
@@ -67,9 +74,12 @@ export async function runEnsembleGate(
     };
   }
 
+  const diff = workspacePath ? getDiff(workspacePath) : null;
+  const retryBaseDelayMs = options.retryBaseDelayMs ?? REVIEWER_RETRY_BASE_DELAY_MS;
+
   const results = await Promise.all(
     reviewers.map((reviewer) =>
-      runSingleReviewer(reviewer, issue, createReviewerClient),
+      runSingleReviewer(reviewer, issue, createReviewerClient, diff, retryBaseDelayMs),
     ),
   );
 
@@ -88,60 +98,129 @@ export async function runEnsembleGate(
 }
 
 /**
- * Aggregate individual verdicts: any FAIL = FAIL, else PASS.
+ * Aggregate individual verdicts.
+ * - Any explicit "fail" verdict (from a reviewer that actually ran) = FAIL.
+ * - If ALL reviewers errored (no pass or fail verdicts), = FAIL (can't skip review).
+ * - Otherwise (all pass/error with at least one pass) = PASS.
  */
 export function aggregateVerdicts(results: ReviewerResult[]): AggregateVerdict {
   if (results.length === 0) {
     return "pass";
   }
 
-  return results.some((r) => r.verdict.verdict === "fail") ? "fail" : "pass";
+  const hasExplicitFail = results.some((r) => r.verdict.verdict === "fail");
+  if (hasExplicitFail) {
+    return "fail";
+  }
+
+  const hasAnyNonError = results.some((r) => r.verdict.verdict !== "error");
+  if (!hasAnyNonError) {
+    // All reviewers errored — can't skip review entirely
+    return "fail";
+  }
+
+  return "pass";
 }
 
 /**
- * Run a single reviewer: create client, send prompt, parse output.
+ * Maximum number of retry attempts for transient reviewer errors
+ * (rate limits, network timeouts, etc.)
+ */
+export const MAX_REVIEWER_RETRIES = 3;
+
+/**
+ * Delay between retry attempts in ms (doubles each attempt).
+ */
+export const REVIEWER_RETRY_BASE_DELAY_MS = 5_000;
+
+/**
+ * Run a single reviewer with retries for transient errors.
+ * Infrastructure failures (rate limits, network) are retried up to MAX_REVIEWER_RETRIES times.
+ * If all retries fail, returns an "error" verdict instead of "fail" so it doesn't
+ * block the gate on infrastructure issues.
  */
 async function runSingleReviewer(
   reviewer: ReviewerDefinition,
   issue: Issue,
   createReviewerClient: CreateReviewerClient,
+  diff: string | null,
+  retryBaseDelayMs: number = REVIEWER_RETRY_BASE_DELAY_MS,
 ): Promise<ReviewerResult> {
-  const client = createReviewerClient(reviewer);
-  try {
-    const prompt = buildReviewerPrompt(reviewer, issue);
-    const title = `Review: ${issue.identifier} (${reviewer.role})`;
-    const result: CodexTurnResult = await client.startSession({ prompt, title });
-    const raw = result.message ?? "";
-    return parseReviewerOutput(reviewer, raw);
-  } catch (error) {
-    // Reviewer failure is treated as a FAIL verdict.
-    const message =
-      error instanceof Error ? error.message : "Reviewer process failed";
-    return {
-      reviewer,
-      verdict: {
-        role: reviewer.role,
-        model: reviewer.model ?? "unknown",
-        verdict: "fail",
-      },
-      feedback: `Reviewer error: ${message}`,
-      raw: "",
-    };
-  } finally {
+  const prompt = buildReviewerPrompt(reviewer, issue, diff);
+  const title = `Review: ${issue.identifier} (${reviewer.role})`;
+  let lastError = "";
+
+  for (let attempt = 0; attempt <= MAX_REVIEWER_RETRIES; attempt++) {
+    const client = createReviewerClient(reviewer);
     try {
-      await client.close();
-    } catch {
-      // Best-effort cleanup.
+      const result: CodexTurnResult = await client.startSession({ prompt, title });
+      const raw = result.message ?? "";
+      return parseReviewerOutput(reviewer, raw);
+    } catch (error) {
+      lastError =
+        error instanceof Error ? error.message : "Reviewer process failed";
+      // Close client before retry
+      try { await client.close(); } catch { /* best-effort */ }
+
+      if (attempt < MAX_REVIEWER_RETRIES) {
+        const delay = retryBaseDelayMs * Math.pow(2, attempt);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+    } finally {
+      try {
+        await client.close();
+      } catch {
+        // Best-effort cleanup.
+      }
     }
+  }
+
+  // All retries exhausted — infrastructure failure, not a code review failure.
+  return {
+    reviewer,
+    verdict: {
+      role: reviewer.role,
+      model: reviewer.model ?? "unknown",
+      verdict: "error",
+    },
+    feedback: `Failed after ${MAX_REVIEWER_RETRIES + 1} attempts. Last error: ${lastError}`,
+    raw: "",
+  };
+}
+
+/**
+ * Fetch the git diff for the workspace (origin/main...HEAD).
+ * Returns the diff string, truncated to maxChars. Returns empty string on failure.
+ */
+const MAX_DIFF_CHARS = 12_000;
+
+export function getDiff(workspacePath: string, maxChars = MAX_DIFF_CHARS): string {
+  try {
+    const raw = execFileSync("git", ["diff", "origin/main...HEAD"], {
+      cwd: workspacePath,
+      encoding: "utf-8",
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: 15_000,
+    });
+    if (raw.length <= maxChars) {
+      return raw;
+    }
+    return raw.slice(0, maxChars) + "\n\n... (diff truncated)";
+  } catch {
+    return "";
   }
 }
 
 /**
- * Build the prompt for a reviewer. Includes issue metadata + role context.
- * The reviewer's prompt template name is passed as context but not loaded
- * here — that's handled by the caller if using LiquidJS templates.
+ * Build the prompt for a reviewer. Includes issue metadata, role context,
+ * the actual PR diff, and the reviewer's prompt field as inline instructions.
  */
-function buildReviewerPrompt(reviewer: ReviewerDefinition, issue: Issue): string {
+function buildReviewerPrompt(
+  reviewer: ReviewerDefinition,
+  issue: Issue,
+  diff: string | null,
+): string {
   const lines = [
     `You are a code reviewer with the role: ${reviewer.role}.`,
     "",
@@ -150,9 +229,26 @@ function buildReviewerPrompt(reviewer: ReviewerDefinition, issue: Issue): string
     `- Title: ${issue.title}`,
     ...(issue.description ? [`- Description: ${issue.description}`] : []),
     ...(issue.url ? [`- URL: ${issue.url}`] : []),
+  ];
+
+  if (diff && diff.length > 0) {
+    lines.push(
+      "",
+      `## Code Changes (git diff)`,
+      "```diff",
+      diff,
+      "```",
+    );
+  }
+
+  if (reviewer.prompt) {
+    lines.push("", `## Review Focus`, reviewer.prompt);
+  }
+
+  lines.push(
     "",
     `## Instructions`,
-    `Review the changes for this issue. Respond with TWO sections:`,
+    `Review the code changes above for this issue. Respond with TWO sections:`,
     "",
     `1. A JSON verdict line (must be valid JSON on a single line):`,
     "```",
@@ -161,11 +257,7 @@ function buildReviewerPrompt(reviewer: ReviewerDefinition, issue: Issue): string
     `Set verdict to "pass" if the changes look good, or "fail" if there are issues.`,
     "",
     `2. Plain text feedback explaining your assessment.`,
-  ];
-
-  if (reviewer.prompt) {
-    lines.push("", `## Prompt template: ${reviewer.prompt}`);
-  }
+  );
 
   return lines.join("\n");
 }
@@ -251,7 +343,8 @@ export function formatGateComment(
       : "## Ensemble Review: FAIL";
 
   const sections = results.map((r) => {
-    const icon = r.verdict.verdict === "pass" ? "PASS" : "FAIL";
+    const iconMap = { pass: "PASS", fail: "FAIL", error: "ERROR" } as const;
+    const icon = iconMap[r.verdict.verdict] ?? "FAIL";
     return [
       `### ${r.verdict.role} (${r.verdict.model}): ${icon}`,
       "",
