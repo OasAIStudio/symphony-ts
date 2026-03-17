@@ -95,9 +95,22 @@ stages:
       - runner: gemini
         model: gemini-2.5-pro
         role: adversarial-reviewer
+        prompt: |
+          You are reviewing a small, scoped task from a Linear issue. The implementation was done by an autonomous agent.
+          Focus on correctness relative to the issue description — does the code do what was asked?
+          PASS if: the implementation is functionally correct, tests are present, and no obvious bugs exist.
+          FAIL only for: broken logic, missing core requirements from the issue description, or code that would crash at runtime.
+          Do NOT fail for: style preferences, missing comments, missing edge-case handling beyond the issue scope, or theoretical concerns that don't apply to the actual diff.
+          Be pragmatic. These are small, well-scoped tasks — not production audits.
       - runner: gemini
         model: gemini-2.5-pro
         role: security-reviewer
+        prompt: |
+          You are reviewing a small, scoped task for security issues. Focus only on the actual code changes in the diff.
+          PASS if: no injection vulnerabilities (SQL, command, XSS), no hardcoded secrets, no obviously broken auth checks.
+          FAIL only for: concrete, exploitable vulnerabilities visible in the diff — not theoretical risks.
+          Do NOT fail for: information disclosure on health/status endpoints, use of non-cryptographic randomness for non-security purposes, missing rate limiting, or theoretical timing attacks.
+          The bar for FAIL is: "an attacker could exploit this specific code." If you can't describe the exploit, PASS.
     on_approve: merge
     on_rework: implement
 

@@ -180,6 +180,7 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
         const gateOptions = {
           issue,
           stage,
+          workspacePath: workspaceInfo.workspacePath,
           createReviewerClient: (reviewer: import("../config/types.js").ReviewerDefinition) => {
             const kind = (reviewer.runner ?? options.config.runner.kind) as RunnerKind;
             if (!isAiSdkRunner(kind)) {

@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+
 import type { AgentRunnerCodexClient } from "../agent/runner.js";
 import type { CodexTurnResult } from "../codex/app-server-client.js";
 import type { ReviewerDefinition, StageDefinition } from "../config/types.js";
@@ -48,6 +50,7 @@ export interface EnsembleGateHandlerOptions {
   stage: StageDefinition;
   createReviewerClient: CreateReviewerClient;
   postComment?: PostComment;
+  workspacePath?: string;
 }
 
 /**
@@ -56,7 +59,7 @@ export interface EnsembleGateHandlerOptions {
 export async function runEnsembleGate(
   options: EnsembleGateHandlerOptions,
 ): Promise<EnsembleGateResult> {
-  const { issue, stage, createReviewerClient, postComment } = options;
+  const { issue, stage, createReviewerClient, postComment, workspacePath } = options;
   const reviewers = stage.reviewers;
 
   if (reviewers.length === 0) {
@@ -67,9 +70,11 @@ export async function runEnsembleGate(
     };
   }
 
+  const diff = workspacePath ? getDiff(workspacePath) : null;
+
   const results = await Promise.all(
     reviewers.map((reviewer) =>
-      runSingleReviewer(reviewer, issue, createReviewerClient),
+      runSingleReviewer(reviewer, issue, createReviewerClient, diff),
     ),
   );
 
@@ -105,10 +110,11 @@ async function runSingleReviewer(
   reviewer: ReviewerDefinition,
   issue: Issue,
   createReviewerClient: CreateReviewerClient,
+  diff: string | null,
 ): Promise<ReviewerResult> {
   const client = createReviewerClient(reviewer);
   try {
-    const prompt = buildReviewerPrompt(reviewer, issue);
+    const prompt = buildReviewerPrompt(reviewer, issue, diff);
     const title = `Review: ${issue.identifier} (${reviewer.role})`;
     const result: CodexTurnResult = await client.startSession({ prompt, title });
     const raw = result.message ?? "";
@@ -137,11 +143,37 @@ async function runSingleReviewer(
 }
 
 /**
- * Build the prompt for a reviewer. Includes issue metadata + role context.
- * The reviewer's prompt template name is passed as context but not loaded
- * here — that's handled by the caller if using LiquidJS templates.
+ * Fetch the git diff for the workspace (origin/main...HEAD).
+ * Returns the diff string, truncated to maxChars. Returns empty string on failure.
  */
-function buildReviewerPrompt(reviewer: ReviewerDefinition, issue: Issue): string {
+const MAX_DIFF_CHARS = 12_000;
+
+export function getDiff(workspacePath: string, maxChars = MAX_DIFF_CHARS): string {
+  try {
+    const raw = execFileSync("git", ["diff", "origin/main...HEAD"], {
+      cwd: workspacePath,
+      encoding: "utf-8",
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: 15_000,
+    });
+    if (raw.length <= maxChars) {
+      return raw;
+    }
+    return raw.slice(0, maxChars) + "\n\n... (diff truncated)";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Build the prompt for a reviewer. Includes issue metadata, role context,
+ * the actual PR diff, and the reviewer's prompt field as inline instructions.
+ */
+function buildReviewerPrompt(
+  reviewer: ReviewerDefinition,
+  issue: Issue,
+  diff: string | null,
+): string {
   const lines = [
     `You are a code reviewer with the role: ${reviewer.role}.`,
     "",
@@ -150,9 +182,26 @@ function buildReviewerPrompt(reviewer: ReviewerDefinition, issue: Issue): string
     `- Title: ${issue.title}`,
     ...(issue.description ? [`- Description: ${issue.description}`] : []),
     ...(issue.url ? [`- URL: ${issue.url}`] : []),
+  ];
+
+  if (diff && diff.length > 0) {
+    lines.push(
+      "",
+      `## Code Changes (git diff)`,
+      "```diff",
+      diff,
+      "```",
+    );
+  }
+
+  if (reviewer.prompt) {
+    lines.push("", `## Review Focus`, reviewer.prompt);
+  }
+
+  lines.push(
     "",
     `## Instructions`,
-    `Review the changes for this issue. Respond with TWO sections:`,
+    `Review the code changes above for this issue. Respond with TWO sections:`,
     "",
     `1. A JSON verdict line (must be valid JSON on a single line):`,
     "```",
@@ -161,11 +210,7 @@ function buildReviewerPrompt(reviewer: ReviewerDefinition, issue: Issue): string
     `Set verdict to "pass" if the changes look good, or "fail" if there are issues.`,
     "",
     `2. Plain text feedback explaining your assessment.`,
-  ];
-
-  if (reviewer.prompt) {
-    lines.push("", `## Prompt template: ${reviewer.prompt}`);
-  }
+  );
 
   return lines.join("\n");
 }
