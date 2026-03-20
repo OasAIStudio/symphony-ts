@@ -32,6 +32,8 @@ export const LOG_FIELDS = [
   "turn_number",
   "prompt_chars",
   "estimated_prompt_tokens",
+  "workers_aborted",
+  "timed_out",
 ] as const;
 
 export type LogField = (typeof LOG_FIELDS)[number];

@@ -47,6 +47,7 @@ describe("domain model", () => {
       "retry_timer_fired",
       "reconciliation_state_refresh",
       "stall_timeout",
+      "shutdown_complete",
     ]);
   });
 

@@ -783,6 +783,98 @@ describe("startRuntimeService shutdown", () => {
     );
     expect(timeoutEntry).toBeDefined();
   });
+
+  it("logs shutdown_complete event with correct fields after clean shutdown", async () => {
+    const tracker = createTracker();
+    const fakeRunner = new FakeAgentRunner();
+    const entries: StructuredLogEntry[] = [];
+    const logger = new StructuredLogger([
+      {
+        write(entry) {
+          entries.push(entry);
+        },
+      },
+    ]);
+
+    const service = await startRuntimeService({
+      config: createConfig(),
+      tracker,
+      logger,
+      workflowWatcher: null,
+      runtimeHost: new OrchestratorRuntimeHost({
+        config: createConfig(),
+        tracker,
+        logger,
+        createAgentRunner: ({ onEvent }) => {
+          fakeRunner.onEvent = onEvent;
+          return fakeRunner;
+        },
+        now: () => new Date("2026-03-06T00:00:05.000Z"),
+      }),
+    });
+
+    // Wait for initial poll to dispatch worker
+    await service.runtimeHost.flushEvents();
+
+    // Call shutdown
+    await service.shutdown();
+
+    const completeEntry = entries.find((e) => e.event === "shutdown_complete");
+    expect(completeEntry).toBeDefined();
+    expect(completeEntry).toHaveProperty("workers_aborted");
+    expect(typeof completeEntry?.workers_aborted).toBe("number");
+    expect(completeEntry).toHaveProperty("timed_out", false);
+    expect(completeEntry).toHaveProperty("duration_ms");
+    expect(typeof completeEntry?.duration_ms).toBe("number");
+  });
+
+  it("logs shutdown_complete with timed_out=true when shutdown timeout fires", async () => {
+    const tracker = createTracker();
+    const entries: StructuredLogEntry[] = [];
+    const logger = new StructuredLogger([
+      {
+        write(entry) {
+          entries.push(entry);
+        },
+      },
+    ]);
+
+    // A runner that never settles — ignores abort signals
+    const hangingRunner = {
+      run(_input: Parameters<FakeAgentRunner["run"]>[0]): Promise<never> {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      },
+    };
+
+    const service = await startRuntimeService({
+      config: createConfig(),
+      tracker,
+      logger,
+      workflowWatcher: null,
+      shutdownTimeoutMs: 50,
+      runtimeHost: new OrchestratorRuntimeHost({
+        config: createConfig(),
+        tracker,
+        logger,
+        agentRunner: hangingRunner,
+        now: () => new Date("2026-03-06T00:00:05.000Z"),
+      }),
+    });
+
+    // Wait for initial poll to dispatch worker
+    await service.runtimeHost.flushEvents();
+
+    // Shutdown should complete after timeout
+    await service.shutdown();
+
+    const completeEntry = entries.find((e) => e.event === "shutdown_complete");
+    expect(completeEntry).toBeDefined();
+    expect(completeEntry).toHaveProperty("timed_out", true);
+    expect(completeEntry).toHaveProperty("workers_aborted");
+    expect(typeof completeEntry?.duration_ms).toBe("number");
+  });
 });
 
 class FakeAgentRunner {

@@ -371,10 +371,12 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
     };
   }
 
-  abortAllWorkers(): void {
+  abortAllWorkers(): number {
+    const count = this.workers.size;
     for (const worker of this.workers.values()) {
       worker.controller.abort("Shutdown: aborting running workers.");
     }
+    return count;
   }
 
   private async spawnWorkerExecution(
@@ -770,10 +772,13 @@ export async function startRuntimeService(
 
     removeSignalHandlers();
 
-    runtimeHost.abortAllWorkers();
+    const shutdownStart = Date.now();
+    const workersAborted = runtimeHost.abortAllWorkers();
 
+    let timedOut = false;
     const idleOrTimeout = new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
+        timedOut = true;
         void logger.warn(
           "shutdown_idle_timeout",
           "Timed out waiting for workers to become idle; proceeding with exit.",
@@ -792,6 +797,16 @@ export async function startRuntimeService(
       dashboard?.close() ?? Promise.resolve(),
       workflowWatcher?.close() ?? Promise.resolve(),
     ]);
+
+    await logger.info(
+      "shutdown_complete",
+      "Shutdown complete.",
+      {
+        workers_aborted: workersAborted,
+        timed_out: timedOut,
+        duration_ms: Date.now() - shutdownStart,
+      },
+    );
 
     resolveExit(exitPromise, pendingExitCode);
     resolveClosed(exitPromise);
