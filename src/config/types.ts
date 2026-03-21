@@ -90,8 +90,14 @@ export interface StageDefinition {
   linearState: string | null;
 }
 
+export interface FastTrackConfig {
+  label: string;
+  initialStage: string;
+}
+
 export interface StagesConfig {
   initialStage: string;
+  fastTrack: FastTrackConfig | null;
   stages: Readonly<Record<string, StageDefinition>>;
 }
 

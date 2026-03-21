@@ -216,6 +216,12 @@ observability:
 stages:
   initial_stage: investigate
 
+  # Fast-track: issues with this label skip the investigate stage and start at the target stage.
+  # Remove or comment out this block if you do not need fast-track routing.
+  # fast_track:
+  #   label: trivial
+  #   initial_stage: implement
+
   investigate:
     type: agent
     runner: claude-code

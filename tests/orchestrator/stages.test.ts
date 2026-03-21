@@ -575,6 +575,7 @@ function createStagedOrchestrator(overrides?: {
 function createThreeStageConfig(): StagesConfig {
   return {
     initialStage: "investigate",
+    fastTrack: null,
     stages: {
       investigate: {
         type: "agent",
@@ -633,6 +634,7 @@ function createThreeStageConfig(): StagesConfig {
 function createSimpleTwoStageConfig(): StagesConfig {
   return {
     initialStage: "implement",
+    fastTrack: null,
     stages: {
       implement: {
         type: "agent",
@@ -673,6 +675,7 @@ function createSimpleTwoStageConfig(): StagesConfig {
 function createTwoStageConfigWithTerminalLinearState(): StagesConfig {
   return {
     initialStage: "implement",
+    fastTrack: null,
     stages: {
       implement: {
         type: "agent",
@@ -713,6 +716,7 @@ function createTwoStageConfigWithTerminalLinearState(): StagesConfig {
 function createThreeStageConfigWithLinearStates(): StagesConfig {
   return {
     initialStage: "investigate",
+    fastTrack: null,
     stages: {
       investigate: {
         type: "agent",
@@ -771,6 +775,7 @@ function createThreeStageConfigWithLinearStates(): StagesConfig {
 function createGateWorkflowConfigWithLinearStates(): StagesConfig {
   return {
     initialStage: "implement",
+    fastTrack: null,
     stages: {
       implement: {
         type: "agent",
@@ -847,6 +852,7 @@ function createGateWorkflowConfigWithLinearStates(): StagesConfig {
 function createGateWorkflowConfig(): StagesConfig {
   return {
     initialStage: "implement",
+    fastTrack: null,
     stages: {
       implement: {
         type: "agent",
@@ -923,6 +929,7 @@ function createGateWorkflowConfig(): StagesConfig {
 function createGateToTerminalConfigWithLinearState(): StagesConfig {
   return {
     initialStage: "implement",
+    fastTrack: null,
     stages: {
       implement: {
         type: "agent",
@@ -981,6 +988,7 @@ function createGateToTerminalConfigWithLinearState(): StagesConfig {
 function createAgentReviewWorkflowConfig(): StagesConfig {
   return {
     initialStage: "implement",
+    fastTrack: null,
     stages: {
       implement: {
         type: "agent",

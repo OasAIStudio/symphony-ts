@@ -192,6 +192,7 @@ describe("validateStagesConfig", () => {
   it("returns ok for a valid stage machine", () => {
     const stages: StagesConfig = {
       initialStage: "investigate",
+      fastTrack: null,
       stages: {
         investigate: {
           type: "agent",
@@ -253,6 +254,7 @@ describe("validateStagesConfig", () => {
   it("rejects when initial_stage references unknown stage", () => {
     const stages: StagesConfig = {
       initialStage: "nonexistent",
+      fastTrack: null,
       stages: {
         implement: {
           type: "agent",
@@ -294,6 +296,7 @@ describe("validateStagesConfig", () => {
   it("rejects agent stage without on_complete transition", () => {
     const stages: StagesConfig = {
       initialStage: "implement",
+      fastTrack: null,
       stages: {
         implement: {
           type: "agent",
@@ -335,6 +338,7 @@ describe("validateStagesConfig", () => {
   it("rejects gate stage without on_approve transition", () => {
     const stages: StagesConfig = {
       initialStage: "review",
+      fastTrack: null,
       stages: {
         review: {
           type: "gate",
@@ -376,6 +380,7 @@ describe("validateStagesConfig", () => {
   it("rejects transitions referencing unknown stages", () => {
     const stages: StagesConfig = {
       initialStage: "implement",
+      fastTrack: null,
       stages: {
         implement: {
           type: "agent",
@@ -423,6 +428,7 @@ describe("validateStagesConfig", () => {
   it("rejects when no terminal stage is defined", () => {
     const stages: StagesConfig = {
       initialStage: "a",
+      fastTrack: null,
       stages: {
         a: {
           type: "agent",
@@ -464,6 +470,7 @@ describe("validateStagesConfig", () => {
   it("detects unreachable stages", () => {
     const stages: StagesConfig = {
       initialStage: "implement",
+      fastTrack: null,
       stages: {
         implement: {
           type: "agent",
@@ -519,6 +526,7 @@ describe("validateStagesConfig", () => {
   it("validates agent stage on_rework referencing valid stage", () => {
     const stages: StagesConfig = {
       initialStage: "implement",
+      fastTrack: null,
       stages: {
         implement: {
           type: "agent",
@@ -580,6 +588,7 @@ describe("validateStagesConfig", () => {
   it("rejects agent stage on_rework referencing unknown stage", () => {
     const stages: StagesConfig = {
       initialStage: "implement",
+      fastTrack: null,
       stages: {
         implement: {
           type: "agent",

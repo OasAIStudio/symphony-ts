@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  resolveStagesConfig,
   resolveWorkflowConfig,
   validateDispatchConfig,
+  validateStagesConfig,
 } from "../../src/config/config-resolver.js";
 import {
   DEFAULT_CODEX_COMMAND,
@@ -309,5 +311,69 @@ describe("config-resolver", () => {
     );
 
     expect(validation).toEqual({ ok: true });
+  });
+});
+
+describe("config-resolver fast_track", () => {
+  it("parses fast_track label and initial_stage from stages config", () => {
+    const resolved = resolveWorkflowConfig({
+      workflowPath: "/repo/WORKFLOW.md",
+      promptTemplate: "Prompt",
+      config: {
+        stages: {
+          initial_stage: "investigate",
+          fast_track: {
+            label: "trivial",
+            initial_stage: "implement",
+          },
+          investigate: { type: "agent", on_complete: "implement" },
+          implement: { type: "agent", on_complete: "done" },
+          done: { type: "terminal" },
+        },
+      },
+    });
+
+    expect(resolved.stages).not.toBeNull();
+    expect(resolved.stages?.fastTrack).toEqual({
+      label: "trivial",
+      initialStage: "implement",
+    });
+  });
+
+  it("sets fastTrack to null when fast_track is not present in stages config", () => {
+    const resolved = resolveWorkflowConfig({
+      workflowPath: "/repo/WORKFLOW.md",
+      promptTemplate: "Prompt",
+      config: {
+        stages: {
+          initial_stage: "investigate",
+          investigate: { type: "agent", on_complete: "done" },
+          done: { type: "terminal" },
+        },
+      },
+    });
+
+    expect(resolved.stages?.fastTrack).toBeNull();
+  });
+
+  it("fast_track validation rejects unknown fast_track initial_stage target", () => {
+    const stagesConfig = resolveStagesConfig({
+      initial_stage: "investigate",
+      fast_track: {
+        label: "trivial",
+        initial_stage: "nonexistent",
+      },
+      investigate: { type: "agent", on_complete: "done" },
+      done: { type: "terminal" },
+    });
+
+    const result = validateStagesConfig(stagesConfig);
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("fast_track.initial_stage 'nonexistent'"),
+      ]),
+    );
   });
 });

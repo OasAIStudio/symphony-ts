@@ -1020,6 +1020,7 @@ function createStagedOrchestrator(overrides?: {
 function createThreeStageConfig(): StagesConfig {
   return {
     initialStage: "investigate",
+    fastTrack: null,
     stages: {
       investigate: {
         type: "agent",
@@ -1078,6 +1079,7 @@ function createThreeStageConfig(): StagesConfig {
 function createGateWorkflowConfig(): StagesConfig {
   return {
     initialStage: "implement",
+    fastTrack: null,
     stages: {
       implement: {
         type: "agent",
@@ -1154,6 +1156,7 @@ function createGateWorkflowConfig(): StagesConfig {
 function createAgentReviewWorkflowConfig(): StagesConfig {
   return {
     initialStage: "implement",
+    fastTrack: null,
     stages: {
       implement: {
         type: "agent",

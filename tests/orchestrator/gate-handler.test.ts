@@ -852,6 +852,7 @@ function createGateStage(overrides?: {
 function createEnsembleWorkflowConfig() {
   return {
     initialStage: "implement",
+    fastTrack: null,
     stages: {
       implement: {
         type: "agent" as const,

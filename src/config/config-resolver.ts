@@ -30,6 +30,7 @@ import {
 } from "./defaults.js";
 import type {
   DispatchValidationResult,
+  FastTrackConfig,
   GateType,
   ResolvedWorkflowConfig,
   ReviewerDefinition,
@@ -374,7 +375,7 @@ export function resolveStagesConfig(value: unknown): StagesConfig | null {
   let firstStageName: string | null = null;
 
   for (const [name, stageValue] of Object.entries(raw)) {
-    if (name === "initial_stage") {
+    if (name === "initial_stage" || name === "fast_track") {
       continue;
     }
 
@@ -416,8 +417,17 @@ export function resolveStagesConfig(value: unknown): StagesConfig | null {
   // biome-ignore lint/style/noNonNullAssertion: firstStageName guaranteed non-null when stageEntries is non-empty
   const initialStage = readString(raw.initial_stage) ?? firstStageName!;
 
+  const fastTrackRaw = asRecord(raw.fast_track);
+  const fastTrackLabel = readString(fastTrackRaw.label);
+  const fastTrackInitialStage = readString(fastTrackRaw.initial_stage);
+  const fastTrack: FastTrackConfig | null =
+    fastTrackLabel !== null && fastTrackInitialStage !== null
+      ? { label: fastTrackLabel, initialStage: fastTrackInitialStage }
+      : null;
+
   return Object.freeze({
     initialStage,
+    fastTrack,
     stages: Object.freeze(stageEntries),
   });
 }
@@ -440,6 +450,15 @@ export function validateStagesConfig(
   if (!stageNames.has(stagesConfig.initialStage)) {
     errors.push(
       `initial_stage '${stagesConfig.initialStage}' does not reference a defined stage.`,
+    );
+  }
+
+  if (
+    stagesConfig.fastTrack != null &&
+    !stageNames.has(stagesConfig.fastTrack.initialStage)
+  ) {
+    errors.push(
+      `fast_track.initial_stage '${stagesConfig.fastTrack.initialStage}' does not reference a defined stage.`,
     );
   }
 

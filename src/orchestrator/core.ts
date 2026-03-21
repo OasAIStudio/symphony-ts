@@ -1122,7 +1122,20 @@ export class OrchestratorCore {
     let stageName: string | null = null;
 
     if (stagesConfig !== null) {
-      stageName = this.state.issueStages[issue.id] ?? stagesConfig.initialStage;
+      const cachedStage = this.state.issueStages[issue.id];
+      if (cachedStage !== undefined) {
+        stageName = cachedStage;
+      } else if (
+        stagesConfig.fastTrack != null &&
+        issue.labels.includes(stagesConfig.fastTrack.label)
+      ) {
+        stageName = stagesConfig.fastTrack.initialStage;
+        console.log(
+          `[orchestrator] Fast-tracking ${issue.identifier} to ${stageName} (label: ${stagesConfig.fastTrack.label})`,
+        );
+      } else {
+        stageName = stagesConfig.initialStage;
+      }
       stage = stagesConfig.stages[stageName] ?? null;
 
       if (stage !== null && stage.type === "terminal") {

@@ -1321,6 +1321,7 @@ function createStagedConfig(): ResolvedWorkflowConfig {
     ...createConfig(),
     stages: {
       initialStage: "investigate",
+      fastTrack: null,
       stages: {
         investigate: {
           type: "agent",

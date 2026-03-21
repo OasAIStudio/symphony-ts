@@ -1452,6 +1452,7 @@ describe("completed issue resume guard", () => {
     const config = createConfig();
     config.stages = {
       initialStage: "investigate",
+      fastTrack: null,
       stages: {
         investigate: {
           type: "agent",
@@ -1521,6 +1522,7 @@ describe("completed issue resume guard", () => {
     const config = createConfig();
     config.stages = {
       initialStage: "investigate",
+      fastTrack: null,
       stages: {
         investigate: {
           type: "agent",
@@ -1622,6 +1624,7 @@ describe("execution history stage records", () => {
     const config = createConfig();
     config.stages = {
       initialStage: "investigate",
+      fastTrack: null,
       stages: {
         investigate: {
           type: "agent",
@@ -1794,6 +1797,7 @@ describe("execution report on terminal state", () => {
     const config = createConfig();
     config.stages = {
       initialStage: "investigate",
+      fastTrack: null,
       stages: {
         investigate: {
           type: "agent",
@@ -2310,6 +2314,7 @@ describe("review findings comment on agent review failure", () => {
     ];
     config.stages = {
       initialStage: "implement",
+      fastTrack: null,
       stages: {
         implement: {
           type: "agent",
@@ -2673,6 +2678,326 @@ describe("review findings comment on agent review failure", () => {
     );
     expect(escalation).toHaveLength(1);
     expect(escalation[0]?.body).toContain("max rework attempts exceeded");
+  });
+});
+
+describe("fast-track label-based stage routing", () => {
+  function createFastTrackConfig(
+    overrides?: Partial<ResolvedWorkflowConfig>,
+  ): ResolvedWorkflowConfig {
+    return {
+      ...createConfig(),
+      stages: {
+        initialStage: "investigate",
+        fastTrack: { label: "trivial", initialStage: "implement" },
+        stages: Object.freeze({
+          investigate: {
+            type: "agent",
+            runner: null,
+            model: null,
+            prompt: null,
+            maxTurns: null,
+            timeoutMs: null,
+            concurrency: null,
+            gateType: null,
+            maxRework: null,
+            reviewers: [],
+            transitions: {
+              onComplete: "implement",
+              onApprove: null,
+              onRework: null,
+            },
+            linearState: null,
+          },
+          implement: {
+            type: "agent",
+            runner: null,
+            model: null,
+            prompt: null,
+            maxTurns: null,
+            timeoutMs: null,
+            concurrency: null,
+            gateType: null,
+            maxRework: null,
+            reviewers: [],
+            transitions: {
+              onComplete: "done",
+              onApprove: null,
+              onRework: null,
+            },
+            linearState: null,
+          },
+          done: {
+            type: "terminal",
+            runner: null,
+            model: null,
+            prompt: null,
+            maxTurns: null,
+            timeoutMs: null,
+            concurrency: null,
+            gateType: null,
+            maxRework: null,
+            reviewers: [],
+            transitions: { onComplete: null, onApprove: null, onRework: null },
+            linearState: null,
+          },
+        }),
+      },
+      ...overrides,
+    };
+  }
+
+  it("fast-track: trivial-labeled issue starts at fast-track initial stage", async () => {
+    const spawnedStageNames: Array<string | null> = [];
+    const orchestrator = new OrchestratorCore({
+      config: createFastTrackConfig(),
+      tracker: createTracker({
+        candidates: [
+          createIssue({
+            id: "1",
+            identifier: "ISSUE-1",
+            state: "Todo",
+            labels: ["trivial"],
+          }),
+        ],
+      }),
+      spawnWorker: async ({ stageName }) => {
+        spawnedStageNames.push(stageName);
+        return {
+          workerHandle: { pid: 1001 },
+          monitorHandle: { ref: "monitor-1" },
+        };
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    await orchestrator.pollTick();
+
+    expect(spawnedStageNames).toEqual(["implement"]);
+    expect(orchestrator.getState().issueStages["1"]).toBe("implement");
+  });
+
+  it("fast-track: non-trivial issue follows normal pipeline (starts at investigate)", async () => {
+    const spawnedStageNames: Array<string | null> = [];
+    const orchestrator = new OrchestratorCore({
+      config: createFastTrackConfig(),
+      tracker: createTracker({
+        candidates: [
+          createIssue({
+            id: "1",
+            identifier: "ISSUE-1",
+            state: "Todo",
+            labels: [],
+          }),
+        ],
+      }),
+      spawnWorker: async ({ stageName }) => {
+        spawnedStageNames.push(stageName);
+        return {
+          workerHandle: { pid: 1001 },
+          monitorHandle: { ref: "monitor-1" },
+        };
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    await orchestrator.pollTick();
+
+    expect(spawnedStageNames).toEqual(["investigate"]);
+    expect(orchestrator.getState().issueStages["1"]).toBe("investigate");
+  });
+
+  it("fast-track: case-insensitive label matching (label already normalized to lowercase by linear-normalize.ts)", async () => {
+    // Labels are normalized to lowercase upstream — "trivial" in config matches "trivial" in issue
+    const spawnedStageNames: Array<string | null> = [];
+    const orchestrator = new OrchestratorCore({
+      config: createFastTrackConfig(),
+      tracker: createTracker({
+        candidates: [
+          // label is already normalized to lowercase "trivial" (as linear-normalize.ts does)
+          createIssue({
+            id: "1",
+            identifier: "ISSUE-1",
+            state: "Todo",
+            labels: ["trivial"],
+          }),
+        ],
+      }),
+      spawnWorker: async ({ stageName }) => {
+        spawnedStageNames.push(stageName);
+        return {
+          workerHandle: { pid: 1001 },
+          monitorHandle: { ref: "monitor-1" },
+        };
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    await orchestrator.pollTick();
+
+    expect(spawnedStageNames).toEqual(["implement"]);
+  });
+
+  it("fast-track: issue with cached stage ignores fast-track and continues from cached stage", async () => {
+    const spawnedStageNames: Array<string | null> = [];
+    const orchestrator = new OrchestratorCore({
+      config: createFastTrackConfig(),
+      tracker: createTracker({
+        candidates: [
+          createIssue({
+            id: "1",
+            identifier: "ISSUE-1",
+            state: "Todo",
+            labels: ["trivial"],
+          }),
+        ],
+      }),
+      spawnWorker: async ({ stageName }) => {
+        spawnedStageNames.push(stageName);
+        return {
+          workerHandle: { pid: 1001 },
+          monitorHandle: { ref: "monitor-1" },
+        };
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    // Pre-set a cached stage for this issue
+    orchestrator.getState().issueStages["1"] = "review" as unknown as string;
+
+    // Manually add a "review" stage to handle the cached stage scenario
+    // (The orchestrator will use the cached "review" value — which is not in our test stage config
+    // so stage will be null, but stageName will be "review", proving cached stage takes priority)
+    const config = createFastTrackConfig();
+    const orchestratorWithReview = new OrchestratorCore({
+      config: {
+        ...config,
+        stages: config.stages
+          ? {
+              ...config.stages,
+              stages: Object.freeze({
+                ...config.stages.stages,
+                review: {
+                  type: "agent" as const,
+                  runner: null,
+                  model: null,
+                  prompt: null,
+                  maxTurns: null,
+                  timeoutMs: null,
+                  concurrency: null,
+                  gateType: null,
+                  maxRework: null,
+                  reviewers: [],
+                  transitions: {
+                    onComplete: "done",
+                    onApprove: null,
+                    onRework: null,
+                  },
+                  linearState: null,
+                },
+              }),
+            }
+          : null,
+      },
+      tracker: createTracker({
+        candidates: [
+          createIssue({
+            id: "1",
+            identifier: "ISSUE-1",
+            state: "Todo",
+            labels: ["trivial"],
+          }),
+        ],
+      }),
+      spawnWorker: async ({ stageName }) => {
+        spawnedStageNames.push(stageName);
+        return {
+          workerHandle: { pid: 1001 },
+          monitorHandle: { ref: "monitor-1" },
+        };
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    // Pre-set the cached stage — fast-track should be ignored
+    orchestratorWithReview.getState().issueStages["1"] = "review";
+
+    await orchestratorWithReview.pollTick();
+
+    expect(spawnedStageNames).toEqual(["review"]);
+    expect(orchestratorWithReview.getState().issueStages["1"]).toBe("review");
+  });
+
+  it("no fast-track: issue with trivial label uses default initialStage when no fast_track config", async () => {
+    const spawnedStageNames: Array<string | null> = [];
+    const configWithoutFastTrack = createFastTrackConfig();
+    const orchestrator = new OrchestratorCore({
+      config: {
+        ...configWithoutFastTrack,
+        stages: configWithoutFastTrack.stages
+          ? { ...configWithoutFastTrack.stages, fastTrack: null }
+          : null,
+      },
+      tracker: createTracker({
+        candidates: [
+          createIssue({
+            id: "1",
+            identifier: "ISSUE-1",
+            state: "Todo",
+            labels: ["trivial"],
+          }),
+        ],
+      }),
+      spawnWorker: async ({ stageName }) => {
+        spawnedStageNames.push(stageName);
+        return {
+          workerHandle: { pid: 1001 },
+          monitorHandle: { ref: "monitor-1" },
+        };
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    await orchestrator.pollTick();
+
+    expect(spawnedStageNames).toEqual(["investigate"]);
+  });
+
+  it("fast-track: logs activation message when fast-track is applied", async () => {
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => {
+      logs.push(args.join(" "));
+    };
+
+    try {
+      const orchestrator = new OrchestratorCore({
+        config: createFastTrackConfig(),
+        tracker: createTracker({
+          candidates: [
+            createIssue({
+              id: "1",
+              identifier: "ISSUE-1",
+              state: "Todo",
+              labels: ["trivial"],
+            }),
+          ],
+        }),
+        spawnWorker: async () => ({
+          workerHandle: { pid: 1001 },
+          monitorHandle: { ref: "monitor-1" },
+        }),
+        now: () => new Date("2026-03-06T00:00:05.000Z"),
+      });
+
+      await orchestrator.pollTick();
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(logs).toContainEqual(
+      "[orchestrator] Fast-tracking ISSUE-1 to implement (label: trivial)",
+    );
   });
 });
 

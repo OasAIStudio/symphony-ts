@@ -375,6 +375,7 @@ describe("AgentRunner", () => {
     const config = createConfig(root, "unused");
     config.stages = {
       initialStage: "investigate",
+      fastTrack: null,
       stages: {
         investigate: {
           type: "agent",
