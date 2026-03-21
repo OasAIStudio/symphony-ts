@@ -7,6 +7,8 @@ import type {
 } from "../domain/model.js";
 import { getAggregateSecondsRunning } from "./session-metrics.js";
 
+export type HealthStatus = "green" | "yellow" | "red";
+
 export interface RuntimeSnapshotRunningRow {
   issue_id: string;
   issue_identifier: string;
@@ -33,6 +35,8 @@ export interface RuntimeSnapshotRunningRow {
   total_pipeline_tokens: number;
   execution_history: StageRecord[];
   turn_history: TurnHistoryEntry[];
+  health: HealthStatus;
+  health_reason: string | null;
 }
 
 export interface RuntimeSnapshotRetryRow {
@@ -89,6 +93,11 @@ export function buildRuntimeSnapshot(
       );
       const totalPipelineTokens =
         completedStageTokens + entry.totalStageTotalTokens;
+      const { health, health_reason } = classifyHealth(
+        entry.lastCodexTimestamp,
+        tokensPerTurn,
+        now,
+      );
       const row: RuntimeSnapshotRunningRow = {
         issue_id: entry.issue.id,
         issue_identifier: entry.identifier,
@@ -114,6 +123,8 @@ export function buildRuntimeSnapshot(
         total_pipeline_tokens: totalPipelineTokens,
         execution_history: executionHistory,
         turn_history: entry.turnHistory,
+        health,
+        health_reason,
       };
       if (reworkCount > 0) {
         row.rework_count = reworkCount;
@@ -158,4 +169,35 @@ function toSnapshotCodexTotals(
     total_tokens: totals.totalTokens,
     seconds_running: secondsRunning,
   };
+}
+
+const STALL_THRESHOLD_SECONDS = 120;
+const HIGH_TOKEN_BURN_THRESHOLD = 20_000;
+
+function classifyHealth(
+  lastEventAt: string | null,
+  tokensPerTurn: number,
+  now: Date,
+): { health: HealthStatus; health_reason: string | null } {
+  if (lastEventAt !== null) {
+    const lastEventMs = Date.parse(lastEventAt);
+    if (Number.isFinite(lastEventMs)) {
+      const secondsSinceEvent = (now.getTime() - lastEventMs) / 1000;
+      if (secondsSinceEvent > STALL_THRESHOLD_SECONDS) {
+        return {
+          health: "red",
+          health_reason: `stalled: no activity for ${Math.floor(secondsSinceEvent)}s`,
+        };
+      }
+    }
+  }
+
+  if (tokensPerTurn > HIGH_TOKEN_BURN_THRESHOLD) {
+    return {
+      health: "yellow",
+      health_reason: `high token burn: ${Math.round(tokensPerTurn).toLocaleString("en-US")} tokens/turn`,
+    };
+  }
+
+  return { health: "green", health_reason: null };
 }

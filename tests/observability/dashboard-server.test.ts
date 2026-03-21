@@ -416,6 +416,8 @@ function createSnapshot(): RuntimeSnapshot {
         total_pipeline_tokens: 2000,
         execution_history: [],
         turn_history: [],
+        health: "green",
+        health_reason: null,
       },
     ],
     retrying: [

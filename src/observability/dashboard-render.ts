@@ -314,6 +314,33 @@ const DASHBOARD_STYLES = String.raw`
         border-color: #f6d3cf;
         color: var(--danger);
       }
+      .health-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        min-height: 1.85rem;
+        padding: 0.3rem 0.68rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--card-muted);
+        color: var(--ink);
+        font-size: 0.8rem;
+        font-weight: 600;
+        line-height: 1;
+      }
+      .health-badge-dot {
+        display: inline-block;
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 50%;
+        background: var(--ink-muted);
+      }
+      .health-badge-green { background: var(--accent-soft); border-color: rgba(16, 163, 127, 0.18); color: var(--accent-ink); }
+      .health-badge-green .health-badge-dot { background: var(--accent); }
+      .health-badge-yellow { background: var(--warning-soft); border-color: var(--warning-line); color: var(--warning); }
+      .health-badge-yellow .health-badge-dot { background: var(--warning); }
+      .health-badge-red { background: var(--danger-soft); border-color: #f6d3cf; color: var(--danger); }
+      .health-badge-red .health-badge-dot { background: var(--danger); }
       .issue-id {
         font-weight: 600;
         letter-spacing: -0.01em;
@@ -767,6 +794,10 @@ function renderDashboardClientScript(
             const reworkHtml = (row.rework_count != null && row.rework_count > 0)
               ? '<span class="state-badge state-badge-warning">Rework \xD7' + escapeHtml(row.rework_count) + '</span>'
               : '';
+            const healthLabel = row.health === 'red' ? '\uD83D\uDD34 Red' : row.health === 'yellow' ? '\uD83D\uDFE1 Yellow' : '\uD83D\uDFE2 Green';
+            const healthClass = 'health-badge health-badge-' + (row.health || 'green');
+            const healthTitle = row.health_reason ? ' title="' + escapeHtml(row.health_reason) + '"' : '';
+            const healthHtml = '<span class="' + healthClass + '"' + healthTitle + '><span class="health-badge-dot"></span>' + escapeHtml(healthLabel) + '</span>';
             const activityText = row.activity_summary || row.last_event || 'n/a';
             const expandToggle = '<button type="button" class="expand-toggle" aria-expanded="false" data-detail="' + escapeHtml(detailId) + '" onclick="const d=document.getElementById(this.dataset.detail);const open=this.getAttribute(\\'aria-expanded\\')=== \\'true\\';d.style.display=open?\\'none\\':\\'table-row\\';this.setAttribute(\\'aria-expanded\\',String(!open));this.textContent=open?\\'\u25B6 Details\\':\\'\u25BC Details\\';">\u25B6 Details</button>';
 
@@ -774,7 +805,7 @@ function renderDashboardClientScript(
 
             return '<tr class="session-row">' +
               '<td><div class="issue-stack"><span class="issue-id">' + escapeHtml(row.issue_identifier) + '</span><a class="issue-link" href="/api/v1/' + encodeURIComponent(row.issue_identifier) + '">JSON details</a>' + pipelineStageHtml + expandToggle + '</div></td>' +
-              '<td><div class="detail-stack"><span class="' + stateBadgeClass(row.state) + '">' + escapeHtml(row.state) + '</span>' + reworkHtml + '</div></td>' +
+              '<td><div class="detail-stack"><span class="' + stateBadgeClass(row.state) + '">' + escapeHtml(row.state) + '</span>' + reworkHtml + healthHtml + '</div></td>' +
               '<td><div class="session-stack">' + sessionCell + '</div></td>' +
               '<td class="numeric">' + formatRuntimeAndTurns(row, next.generated_at) + '</td>' +
               '<td><div class="detail-stack"><span class="event-text" title="' + escapeHtml(activityText) + '">' + escapeHtml(activityText) + '</span><span class="muted event-meta">' + eventMeta + '</span></div></td>' +
@@ -868,6 +899,7 @@ function renderRunningRows(snapshot: RuntimeSnapshot): string {
                 <div class="detail-stack">
                   <span class="${stateBadgeClass(row.state)}">${escapeHtml(row.state)}</span>
                   ${row.rework_count !== undefined && row.rework_count > 0 ? `<span class="state-badge state-badge-warning">Rework ×${escapeHtml(row.rework_count)}</span>` : ""}
+                  ${renderHealthBadge(row.health, row.health_reason)}
                 </div>
               </td>
               <td>
@@ -996,4 +1028,20 @@ function renderRetryRows(snapshot: RuntimeSnapshot): string {
             </tr>`,
         )
         .join("");
+}
+
+function renderHealthBadge(
+  health: "green" | "yellow" | "red",
+  healthReason: string | null,
+): string {
+  const label =
+    health === "red"
+      ? "🔴 Red"
+      : health === "yellow"
+        ? "🟡 Yellow"
+        : "🟢 Green";
+  const cssClass = `health-badge health-badge-${health}`;
+  const title =
+    healthReason !== null ? ` title="${escapeHtml(healthReason)}"` : "";
+  return `<span class="${cssClass}"${title}><span class="health-badge-dot"></span>${escapeHtml(label)}</span>`;
 }

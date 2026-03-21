@@ -420,6 +420,93 @@ describe("runtime snapshot", () => {
     expect(row.tokens.reasoning_tokens).toBe(75);
   });
 
+  it("classifies health as green when session is active and token burn is normal", () => {
+    const state = createInitialOrchestratorState({
+      pollIntervalMs: 30_000,
+      maxConcurrentAgents: 2,
+    });
+    const now = new Date("2026-03-21T10:05:00.000Z");
+    const recentTimestamp = new Date(now.getTime() - 30_000).toISOString(); // 30s ago
+    const entry = createRunningEntry({
+      issueId: "issue-1",
+      identifier: "ABC-1",
+      startedAt: new Date(now.getTime() - 60_000).toISOString(),
+      sessionId: "thread-a-turn-1",
+      lastCodexEvent: "turn_completed",
+      lastCodexTimestamp: recentTimestamp,
+      lastCodexMessage: "Working",
+      turnCount: 5,
+      codexInputTokens: 10_000,
+      codexOutputTokens: 5_000,
+      codexTotalTokens: 15_000,
+    });
+    entry.totalStageTotalTokens = 15_000;
+    state.running["issue-1"] = entry;
+
+    const snapshot = buildRuntimeSnapshot(state, { now });
+
+    expect(snapshot.running[0]!.health).toBe("green");
+    expect(snapshot.running[0]!.health_reason).toBeNull();
+  });
+
+  it("classifies health as red when session is stalled (last_event_at > 120s ago)", () => {
+    const state = createInitialOrchestratorState({
+      pollIntervalMs: 30_000,
+      maxConcurrentAgents: 2,
+    });
+    const now = new Date("2026-03-21T10:05:00.000Z");
+    const stalledTimestamp = new Date(now.getTime() - 121_000).toISOString(); // 121s ago
+    const entry = createRunningEntry({
+      issueId: "issue-1",
+      identifier: "ABC-1",
+      startedAt: new Date(now.getTime() - 300_000).toISOString(),
+      sessionId: "thread-a-turn-1",
+      lastCodexEvent: "turn_completed",
+      lastCodexTimestamp: stalledTimestamp,
+      lastCodexMessage: "Working",
+      turnCount: 2,
+      codexInputTokens: 1_000,
+      codexOutputTokens: 500,
+      codexTotalTokens: 1_500,
+    });
+    entry.totalStageTotalTokens = 1_500;
+    state.running["issue-1"] = entry;
+
+    const snapshot = buildRuntimeSnapshot(state, { now });
+
+    expect(snapshot.running[0]!.health).toBe("red");
+    expect(snapshot.running[0]!.health_reason).toContain("stalled");
+  });
+
+  it("classifies health as yellow when tokens_per_turn exceeds 20000", () => {
+    const state = createInitialOrchestratorState({
+      pollIntervalMs: 30_000,
+      maxConcurrentAgents: 2,
+    });
+    const now = new Date("2026-03-21T10:05:00.000Z");
+    const recentTimestamp = new Date(now.getTime() - 10_000).toISOString(); // 10s ago (not stalled)
+    const entry = createRunningEntry({
+      issueId: "issue-1",
+      identifier: "ABC-1",
+      startedAt: new Date(now.getTime() - 60_000).toISOString(),
+      sessionId: "thread-a-turn-1",
+      lastCodexEvent: "turn_completed",
+      lastCodexTimestamp: recentTimestamp,
+      lastCodexMessage: "Working",
+      turnCount: 2,
+      codexInputTokens: 30_000,
+      codexOutputTokens: 12_000,
+      codexTotalTokens: 42_001,
+    });
+    entry.totalStageTotalTokens = 42_001;
+    state.running["issue-1"] = entry;
+
+    const snapshot = buildRuntimeSnapshot(state, { now });
+
+    expect(snapshot.running[0]!.health).toBe("yellow");
+    expect(snapshot.running[0]!.health_reason).toContain("token");
+  });
+
   it("returns zero total_pipeline_tokens and empty execution_history when no history exists", () => {
     const state = createInitialOrchestratorState({
       pollIntervalMs: 30_000,
