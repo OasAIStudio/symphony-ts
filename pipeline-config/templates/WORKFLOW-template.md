@@ -161,6 +161,13 @@ hooks:
     else
       echo "On feature branch $CURRENT_BRANCH — skipping rebase, fetch only."
     fi
+    # Import investigation brief into CLAUDE.md if it exists
+    if [ -f "INVESTIGATION-BRIEF.md" ]; then
+      if ! grep -q "@INVESTIGATION-BRIEF.md" CLAUDE.md 2>/dev/null; then
+        echo '' >> CLAUDE.md
+        echo '@INVESTIGATION-BRIEF.md' >> CLAUDE.md
+      fi
+    fi
     echo "Workspace synced."
   before_remove: |
     set -uo pipefail
@@ -376,7 +383,7 @@ When you are done:
 
 {% if stageName == "implement" %}
 ## Stage: Implementation
-You are in the IMPLEMENT stage. An investigation was done in the previous stage — check issue comments for the plan.
+You are in the IMPLEMENT stage. Read INVESTIGATION-BRIEF.md first if it exists in the worktree root. It contains targeted findings from the investigation stage including relevant files, code patterns, architecture context, and test strategy. Use it to skip codebase exploration and go straight to implementation. If the file does not exist, fall back to reading issue comments for the investigation plan.
 
 {% if reworkCount > 0 %}
 ## REWORK ATTEMPT {{ reworkCount }}
