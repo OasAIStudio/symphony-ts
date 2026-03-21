@@ -384,7 +384,7 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
     attempt: number | null,
     stage: StageDefinition | null = null,
     stageName: string | null = null,
-    reworkCount: number = 0,
+    reworkCount = 0,
   ): Promise<{
     workerHandle: WorkerExecution;
     monitorHandle: Promise<void>;
@@ -507,7 +507,8 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
 
     const liveSession = execution.lastResult?.liveSession;
     const durationMs = execution.lastResult?.runAttempt?.startedAt
-      ? this.now().getTime() - new Date(execution.lastResult.runAttempt.startedAt).getTime()
+      ? this.now().getTime() -
+        new Date(execution.lastResult.runAttempt.startedAt).getTime()
       : 0;
     await this.logger?.log("info", "stage_completed", "Stage completed.", {
       issue_id: execution.issueId,
@@ -810,15 +811,11 @@ export async function startRuntimeService(
       workflowWatcher?.close() ?? Promise.resolve(),
     ]);
 
-    await logger.info(
-      "shutdown_complete",
-      "Shutdown complete.",
-      {
-        workers_aborted: workersAborted,
-        timed_out: timedOut,
-        duration_ms: Date.now() - shutdownStart,
-      },
-    );
+    await logger.info("shutdown_complete", "Shutdown complete.", {
+      workers_aborted: workersAborted,
+      timed_out: timedOut,
+      duration_ms: Date.now() - shutdownStart,
+    });
 
     resolveExit(exitPromise, pendingExitCode);
     resolveClosed(exitPromise);

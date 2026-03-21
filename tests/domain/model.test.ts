@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  type ExecutionHistory,
   FAILURE_CLASSES,
   ORCHESTRATOR_EVENTS,
   ORCHESTRATOR_ISSUE_STATUSES,
   RUN_ATTEMPT_PHASES,
-  type ExecutionHistory,
   type StageRecord,
   createEmptyLiveSession,
   createInitialOrchestratorState,
@@ -132,7 +132,10 @@ describe("ExecutionHistory", () => {
   });
 
   it("stage record appended on worker exit", () => {
-    const state = createInitialOrchestratorState({ pollIntervalMs: 1000, maxConcurrentAgents: 2 });
+    const state = createInitialOrchestratorState({
+      pollIntervalMs: 1000,
+      maxConcurrentAgents: 2,
+    });
     const record: StageRecord = {
       stageName: "investigate",
       durationMs: 5000,
@@ -159,17 +162,45 @@ describe("ExecutionHistory", () => {
   });
 
   it("execution history cleaned up after completion", () => {
-    const state = createInitialOrchestratorState({ pollIntervalMs: 1000, maxConcurrentAgents: 2 });
+    const state = createInitialOrchestratorState({
+      pollIntervalMs: 1000,
+      maxConcurrentAgents: 2,
+    });
     const history: ExecutionHistory = [
-      { stageName: "investigate", durationMs: 1000, totalTokens: 100, turns: 1, outcome: "success" },
-      { stageName: "implement", durationMs: 2000, totalTokens: 200, turns: 2, outcome: "success" },
-      { stageName: "review", durationMs: 3000, totalTokens: 300, turns: 3, outcome: "success" },
-      { stageName: "ship", durationMs: 4000, totalTokens: 400, turns: 4, outcome: "success" },
+      {
+        stageName: "investigate",
+        durationMs: 1000,
+        totalTokens: 100,
+        turns: 1,
+        outcome: "success",
+      },
+      {
+        stageName: "implement",
+        durationMs: 2000,
+        totalTokens: 200,
+        turns: 2,
+        outcome: "success",
+      },
+      {
+        stageName: "review",
+        durationMs: 3000,
+        totalTokens: 300,
+        turns: 3,
+        outcome: "success",
+      },
+      {
+        stageName: "ship",
+        durationMs: 4000,
+        totalTokens: 400,
+        turns: 4,
+        outcome: "success",
+      },
     ];
     state.issueExecutionHistory["issue-1"] = history;
     expect(state.issueExecutionHistory["issue-1"]).toHaveLength(4);
 
     // Simulate cleanup when issue reaches Done terminal state
+    // biome-ignore lint/performance/noDelete: delete required here - Record type doesn't accept undefined
     delete state.issueExecutionHistory["issue-1"];
     expect(state.issueExecutionHistory["issue-1"]).toBeUndefined();
   });
@@ -181,10 +212,18 @@ describe("parseFailureSignal", () => {
   });
 
   it("parses each failure class from agent output", () => {
-    expect(parseFailureSignal("[STAGE_FAILED: verify]")).toEqual({ failureClass: "verify" });
-    expect(parseFailureSignal("[STAGE_FAILED: review]")).toEqual({ failureClass: "review" });
-    expect(parseFailureSignal("[STAGE_FAILED: spec]")).toEqual({ failureClass: "spec" });
-    expect(parseFailureSignal("[STAGE_FAILED: infra]")).toEqual({ failureClass: "infra" });
+    expect(parseFailureSignal("[STAGE_FAILED: verify]")).toEqual({
+      failureClass: "verify",
+    });
+    expect(parseFailureSignal("[STAGE_FAILED: review]")).toEqual({
+      failureClass: "review",
+    });
+    expect(parseFailureSignal("[STAGE_FAILED: spec]")).toEqual({
+      failureClass: "spec",
+    });
+    expect(parseFailureSignal("[STAGE_FAILED: infra]")).toEqual({
+      failureClass: "infra",
+    });
   });
 
   it("returns null for null, undefined, or empty input", () => {
@@ -200,13 +239,18 @@ describe("parseFailureSignal", () => {
   });
 
   it("extracts signal from longer agent output", () => {
-    const output = "Tests failed.\n[STAGE_FAILED: verify]\nSee logs for details.";
+    const output =
+      "Tests failed.\n[STAGE_FAILED: verify]\nSee logs for details.";
     expect(parseFailureSignal(output)).toEqual({ failureClass: "verify" });
   });
 
   it("handles extra whitespace inside brackets", () => {
-    expect(parseFailureSignal("[STAGE_FAILED:  spec ]")).toEqual({ failureClass: "spec" });
-    expect(parseFailureSignal("[STAGE_FAILED:review]")).toEqual({ failureClass: "review" });
+    expect(parseFailureSignal("[STAGE_FAILED:  spec ]")).toEqual({
+      failureClass: "spec",
+    });
+    expect(parseFailureSignal("[STAGE_FAILED:review]")).toEqual({
+      failureClass: "review",
+    });
   });
 
   it("rejects unknown failure classes", () => {

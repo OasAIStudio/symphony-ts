@@ -579,7 +579,9 @@ describe("max retry safety net", () => {
 
     // Verify escalation side effects were fired
     expect(escalationComments).toHaveLength(1);
-    expect(escalationComments[0]?.body).toContain("Max retry attempts (2) exceeded");
+    expect(escalationComments[0]?.body).toContain(
+      "Max retry attempts (2) exceeded",
+    );
   });
 
   it("escalates on onRetryTimer failure retry when attempt exceeds limit", async () => {
@@ -625,7 +627,9 @@ describe("max retry safety net", () => {
     expect(orchestrator.getState().completed.has("1")).toBe(true);
     expect(orchestrator.getState().claimed.has("1")).toBe(false);
     expect(escalationComments).toHaveLength(1);
-    expect(escalationComments[0]?.body).toContain("Max retry attempts (2) exceeded");
+    expect(escalationComments[0]?.body).toContain(
+      "Max retry attempts (2) exceeded",
+    );
   });
 
   it("does not count continuation retries against the max limit", async () => {
@@ -702,7 +706,9 @@ describe("max retry safety net", () => {
     expect(orchestrator.getState().completed.has("1")).toBe(true);
     expect(orchestrator.getState().claimed.has("1")).toBe(false);
     expect(escalationComments).toHaveLength(1);
-    expect(escalationComments[0]?.body).toContain("Max retry attempts (1) exceeded");
+    expect(escalationComments[0]?.body).toContain(
+      "Max retry attempts (1) exceeded",
+    );
   });
 
   it("respects the limit for infra failure signals", async () => {
@@ -763,7 +769,13 @@ describe("completed issue resume guard", () => {
       agent: { maxConcurrentAgents: 2 },
     });
     // Include Resume and Blocked in active_states for this test
-    config.tracker.activeStates = ["Todo", "In Progress", "In Review", "Blocked", "Resume"];
+    config.tracker.activeStates = [
+      "Todo",
+      "In Progress",
+      "In Review",
+      "Blocked",
+      "Resume",
+    ];
     config.escalationState = "Blocked";
 
     const orchestrator = createOrchestrator({ config });
@@ -785,7 +797,13 @@ describe("completed issue resume guard", () => {
     const config = createConfig({
       agent: { maxConcurrentAgents: 2 },
     });
-    config.tracker.activeStates = ["Todo", "In Progress", "In Review", "Blocked", "Resume"];
+    config.tracker.activeStates = [
+      "Todo",
+      "In Progress",
+      "In Review",
+      "Blocked",
+      "Resume",
+    ];
     config.escalationState = "Blocked";
 
     const orchestrator = createOrchestrator({ config });
@@ -803,7 +821,13 @@ describe("completed issue resume guard", () => {
     const config = createConfig({
       agent: { maxConcurrentAgents: 2 },
     });
-    config.tracker.activeStates = ["Todo", "In Progress", "In Review", "Blocked", "Resume"];
+    config.tracker.activeStates = [
+      "Todo",
+      "In Progress",
+      "In Review",
+      "Blocked",
+      "Resume",
+    ];
     config.escalationState = "Blocked";
 
     const orchestrator = createOrchestrator({ config });
@@ -822,7 +846,13 @@ describe("completed issue resume guard", () => {
     const config = createConfig({
       agent: { maxConcurrentAgents: 2 },
     });
-    config.tracker.activeStates = ["Todo", "In Progress", "In Review", "Blocked", "Resume"];
+    config.tracker.activeStates = [
+      "Todo",
+      "In Progress",
+      "In Review",
+      "Blocked",
+      "Resume",
+    ];
     config.escalationState = "Blocked";
 
     const orchestrator = createOrchestrator({ config });
@@ -984,7 +1014,13 @@ describe("completed issue resume guard", () => {
     const config = createConfig({
       agent: { maxConcurrentAgents: 2 },
     });
-    config.tracker.activeStates = ["Todo", "In Progress", "In Review", "Blocked", "Resume"];
+    config.tracker.activeStates = [
+      "Todo",
+      "In Progress",
+      "In Review",
+      "Blocked",
+      "Resume",
+    ];
     config.escalationState = "Blocked";
 
     const orchestrator = createOrchestrator({ config });

@@ -16,10 +16,7 @@
   "bin": {
     "symphony": "./dist/src/cli/main.js"
   },
-  "files": [
-    "dist/src",
-    "README.md"
-  ],
+  "files": ["dist/src", "README.md"],
   "publishConfig": {
     "access": "public"
   },

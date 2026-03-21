@@ -6,11 +6,11 @@ import type {
   StagesConfig,
 } from "../../src/config/types.js";
 import type { Issue } from "../../src/domain/model.js";
-import type { EnsembleGateResult } from "../../src/orchestrator/gate-handler.js";
 import {
   OrchestratorCore,
   type OrchestratorCoreOptions,
 } from "../../src/orchestrator/core.js";
+import type { EnsembleGateResult } from "../../src/orchestrator/gate-handler.js";
 import type { IssueTracker } from "../../src/tracker/tracker.js";
 
 describe("orchestrator stage machine", () => {
@@ -179,9 +179,7 @@ describe("orchestrator stage machine", () => {
 
     await orchestrator.pollTick();
 
-    expect(spawnCalls).toEqual([
-      { stageName: null, stageType: null },
-    ]);
+    expect(spawnCalls).toEqual([{ stageName: null, stageType: null }]);
     expect(orchestrator.getState().issueStages).toEqual({});
   });
 
@@ -293,7 +291,11 @@ describe("updateIssueState integration", () => {
 
     await orchestrator.pollTick();
 
-    expect(updateIssueState).toHaveBeenCalledWith("1", "ISSUE-1", "In Progress");
+    expect(updateIssueState).toHaveBeenCalledWith(
+      "1",
+      "ISSUE-1",
+      "In Progress",
+    );
   });
 
   it("does not call updateIssueState when stage has null linearState", async () => {
@@ -320,7 +322,11 @@ describe("updateIssueState integration", () => {
 
     // First dispatch puts issue in "implement" (agent stage with linearState)
     await orchestrator.pollTick();
-    expect(updateIssueState).toHaveBeenCalledWith("1", "ISSUE-1", "In Progress");
+    expect(updateIssueState).toHaveBeenCalledWith(
+      "1",
+      "ISSUE-1",
+      "In Progress",
+    );
 
     // Normal exit advances to "review" (gate stage)
     orchestrator.onWorkerExit({ issueId: "1", outcome: "normal" });
@@ -405,7 +411,9 @@ describe("updateIssueState integration", () => {
   });
 
   it("still dispatches successfully if updateIssueState throws", async () => {
-    const updateIssueState = vi.fn().mockRejectedValue(new Error("Linear API down"));
+    const updateIssueState = vi
+      .fn()
+      .mockRejectedValue(new Error("Linear API down"));
 
     const orchestrator = createStagedOrchestrator({
       stages: createThreeStageConfigWithLinearStates(),
@@ -417,7 +425,11 @@ describe("updateIssueState integration", () => {
     // Dispatch should succeed despite updateIssueState failure
     expect(result.dispatchedIssueIds).toEqual(["1"]);
     expect(Object.keys(orchestrator.getState().running)).toEqual(["1"]);
-    expect(updateIssueState).toHaveBeenCalledWith("1", "ISSUE-1", "In Progress");
+    expect(updateIssueState).toHaveBeenCalledWith(
+      "1",
+      "ISSUE-1",
+      "In Progress",
+    );
   });
 
   it("calls updateIssueState with terminal stage linearState when issue reaches terminal", async () => {
@@ -439,7 +451,11 @@ describe("updateIssueState integration", () => {
     expect(orchestrator.getState().completed.has("1")).toBe(true);
     expect(orchestrator.getState().issueStages["1"]).toBeUndefined();
     // Should have been called twice: once for dispatch ("In Progress") and once for terminal ("Done")
-    expect(updateIssueState).toHaveBeenCalledWith("1", "ISSUE-1", "In Progress");
+    expect(updateIssueState).toHaveBeenCalledWith(
+      "1",
+      "ISSUE-1",
+      "In Progress",
+    );
     expect(updateIssueState).toHaveBeenCalledWith("1", "ISSUE-1", "Done");
   });
 
@@ -490,7 +506,11 @@ describe("updateIssueState integration", () => {
 
     // Should have been called twice: once for dispatch ("In Progress") and once for terminal ("Done")
     expect(orchestrator.getState().completed.has("1")).toBe(true);
-    expect(updateIssueState).toHaveBeenCalledWith("1", "ISSUE-1", "In Progress");
+    expect(updateIssueState).toHaveBeenCalledWith(
+      "1",
+      "ISSUE-1",
+      "In Progress",
+    );
     expect(updateIssueState).toHaveBeenCalledWith("1", "ISSUE-1", "Done");
   });
 });
@@ -511,9 +531,10 @@ function createStagedOrchestrator(overrides?: {
     stageName: string | null;
   }) => void;
 }) {
-  const stages = overrides?.stages !== undefined
-    ? overrides.stages
-    : createThreeStageConfig();
+  const stages =
+    overrides?.stages !== undefined
+      ? overrides.stages
+      : createThreeStageConfig();
 
   const tracker = createTracker({
     candidates: overrides?.candidates ?? [
@@ -522,7 +543,12 @@ function createStagedOrchestrator(overrides?: {
   });
 
   const options: OrchestratorCoreOptions = {
-    config: createConfig({ stages, ...(overrides?.escalationState !== undefined ? { escalationState: overrides.escalationState } : {}) }),
+    config: createConfig({
+      stages,
+      ...(overrides?.escalationState !== undefined
+        ? { escalationState: overrides.escalationState }
+        : {}),
+    }),
     tracker,
     spawnWorker: async (input) => {
       overrides?.onSpawn?.(input);
@@ -532,9 +558,15 @@ function createStagedOrchestrator(overrides?: {
       };
     },
     now: () => new Date("2026-03-06T00:00:05.000Z"),
-    ...(overrides?.updateIssueState !== undefined ? { updateIssueState: overrides.updateIssueState } : {}),
-    ...(overrides?.runEnsembleGate !== undefined ? { runEnsembleGate: overrides.runEnsembleGate } : {}),
-    ...(overrides?.postComment !== undefined ? { postComment: overrides.postComment } : {}),
+    ...(overrides?.updateIssueState !== undefined
+      ? { updateIssueState: overrides.updateIssueState }
+      : {}),
+    ...(overrides?.runEnsembleGate !== undefined
+      ? { runEnsembleGate: overrides.runEnsembleGate }
+      : {}),
+    ...(overrides?.postComment !== undefined
+      ? { postComment: overrides.postComment }
+      : {}),
   };
 
   return new OrchestratorCore(options);
@@ -1027,17 +1059,21 @@ function createTracker(input?: {
 }): IssueTracker {
   return {
     async fetchCandidateIssues() {
-      return input?.candidates ?? [createIssue({ id: "1", identifier: "ISSUE-1" })];
+      return (
+        input?.candidates ?? [createIssue({ id: "1", identifier: "ISSUE-1" })]
+      );
     },
     async fetchIssuesByStates() {
       return [];
     },
     async fetchIssueStatesByIds() {
-      return input?.candidates?.map((issue) => ({
-        id: issue.id,
-        identifier: issue.identifier,
-        state: issue.state,
-      })) ?? [{ id: "1", identifier: "ISSUE-1", state: "In Progress" }];
+      return (
+        input?.candidates?.map((issue) => ({
+          id: issue.id,
+          identifier: issue.identifier,
+          state: issue.state,
+        })) ?? [{ id: "1", identifier: "ISSUE-1", state: "In Progress" }]
+      );
     },
   };
 }

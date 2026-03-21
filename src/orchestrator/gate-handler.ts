@@ -52,7 +52,9 @@ export interface EnsembleGateResult {
 /**
  * Factory function type for creating a runner client for a reviewer.
  */
-export type CreateReviewerClient = (reviewer: ReviewerDefinition) => AgentRunnerCodexClient;
+export type CreateReviewerClient = (
+  reviewer: ReviewerDefinition,
+) => AgentRunnerCodexClient;
 
 /**
  * Function type for posting a comment to an issue tracker.
@@ -75,7 +77,8 @@ export interface EnsembleGateHandlerOptions {
 export async function runEnsembleGate(
   options: EnsembleGateHandlerOptions,
 ): Promise<EnsembleGateResult> {
-  const { issue, stage, createReviewerClient, postComment, workspacePath } = options;
+  const { issue, stage, createReviewerClient, postComment, workspacePath } =
+    options;
   const reviewers = stage.reviewers;
 
   if (reviewers.length === 0) {
@@ -87,11 +90,18 @@ export async function runEnsembleGate(
   }
 
   const diff = workspacePath ? getDiff(workspacePath) : null;
-  const retryBaseDelayMs = options.retryBaseDelayMs ?? REVIEWER_RETRY_BASE_DELAY_MS;
+  const retryBaseDelayMs =
+    options.retryBaseDelayMs ?? REVIEWER_RETRY_BASE_DELAY_MS;
 
   const results = await Promise.all(
     reviewers.map((reviewer) =>
-      runSingleReviewer(reviewer, issue, createReviewerClient, diff, retryBaseDelayMs),
+      runSingleReviewer(
+        reviewer,
+        issue,
+        createReviewerClient,
+        diff,
+        retryBaseDelayMs,
+      ),
     ),
   );
 
@@ -165,19 +175,25 @@ async function runSingleReviewer(
   for (let attempt = 0; attempt <= MAX_REVIEWER_RETRIES; attempt++) {
     const client = createReviewerClient(reviewer);
     try {
-      const result: CodexTurnResult = await client.startSession({ prompt, title });
+      const result: CodexTurnResult = await client.startSession({
+        prompt,
+        title,
+      });
       const raw = result.message ?? "";
       return parseReviewerOutput(reviewer, raw);
     } catch (error) {
       lastError =
         error instanceof Error ? error.message : "Reviewer process failed";
       // Close client before retry
-      try { await client.close(); } catch { /* best-effort */ }
+      try {
+        await client.close();
+      } catch {
+        /* best-effort */
+      }
 
       if (attempt < MAX_REVIEWER_RETRIES) {
-        const delay = retryBaseDelayMs * Math.pow(2, attempt);
+        const delay = retryBaseDelayMs * 2 ** attempt;
         await new Promise((resolve) => setTimeout(resolve, delay));
-        continue;
       }
     } finally {
       try {
@@ -207,7 +223,10 @@ async function runSingleReviewer(
  */
 const MAX_DIFF_CHARS = 12_000;
 
-export function getDiff(workspacePath: string, maxChars = MAX_DIFF_CHARS): string {
+export function getDiff(
+  workspacePath: string,
+  maxChars = MAX_DIFF_CHARS,
+): string {
   try {
     const raw = execFileSync("git", ["diff", "origin/main...HEAD"], {
       cwd: workspacePath,
@@ -218,7 +237,7 @@ export function getDiff(workspacePath: string, maxChars = MAX_DIFF_CHARS): strin
     if (raw.length <= maxChars) {
       return raw;
     }
-    return raw.slice(0, maxChars) + "\n\n... (diff truncated)";
+    return `${raw.slice(0, maxChars)}\n\n... (diff truncated)`;
   } catch {
     return "";
   }
@@ -236,7 +255,7 @@ function buildReviewerPrompt(
   const lines = [
     `You are a code reviewer with the role: ${reviewer.role}.`,
     "",
-    `## Issue`,
+    "## Issue",
     `- Identifier: ${issue.identifier}`,
     `- Title: ${issue.title}`,
     ...(issue.description ? [`- Description: ${issue.description}`] : []),
@@ -244,31 +263,25 @@ function buildReviewerPrompt(
   ];
 
   if (diff && diff.length > 0) {
-    lines.push(
-      "",
-      `## Code Changes (git diff)`,
-      "```diff",
-      diff,
-      "```",
-    );
+    lines.push("", "## Code Changes (git diff)", "```diff", diff, "```");
   }
 
   if (reviewer.prompt) {
-    lines.push("", `## Review Focus`, reviewer.prompt);
+    lines.push("", "## Review Focus", reviewer.prompt);
   }
 
   lines.push(
     "",
-    `## Instructions`,
-    `Review the code changes above for this issue. Respond with TWO sections:`,
+    "## Instructions",
+    "Review the code changes above for this issue. Respond with TWO sections:",
     "",
-    `1. A JSON verdict line (must be valid JSON on a single line):`,
+    "1. A JSON verdict line (must be valid JSON on a single line):",
     "```",
     `{"role": "${reviewer.role}", "model": "${reviewer.model ?? "unknown"}", "verdict": "pass"}`,
     "```",
     `Set verdict to "pass" if the changes look good, or "fail" if there are issues.`,
     "",
-    `2. Plain text feedback explaining your assessment.`,
+    "2. Plain text feedback explaining your assessment.",
   );
 
   return lines.join("\n");
@@ -299,7 +312,9 @@ export function parseReviewerOutput(
   }
 
   // Try to find a JSON verdict in the output
-  const verdictMatch = raw.match(/\{[^}]*"verdict"\s*:\s*"(?:pass|fail)"[^}]*\}/);
+  const verdictMatch = raw.match(
+    /\{[^}]*"verdict"\s*:\s*"(?:pass|fail)"[^}]*\}/,
+  );
   if (verdictMatch === null) {
     // Check for rate-limit text before defaulting to "fail"
     const lower = raw.toLowerCase();
@@ -331,7 +346,7 @@ export function parseReviewerOutput(
       model:
         typeof parsed.model === "string"
           ? parsed.model
-          : reviewer.model ?? "unknown",
+          : (reviewer.model ?? "unknown"),
       verdict: parsed.verdict === "pass" ? "pass" : "fail",
     };
 

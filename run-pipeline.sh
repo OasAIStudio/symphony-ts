@@ -39,7 +39,9 @@ Products:
   household     Household
 
 Options:
-  -h, --help    Show this help message
+  -h, --help          Show this help message
+  --auto-build        Automatically run 'npm run build' if dist is stale
+  --skip-build-check  Skip the dist staleness check entirely
 
 Environment:
   REPO_URL      Override the default repo URL for the product
@@ -56,6 +58,19 @@ fi
 
 PRODUCT="$1"
 shift
+
+# Parse flags before passing remaining args to symphony
+AUTO_BUILD=false
+SKIP_BUILD_CHECK=false
+PASSTHROUGH_ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --auto-build) AUTO_BUILD=true ;;
+    --skip-build-check) SKIP_BUILD_CHECK=true ;;
+    *) PASSTHROUGH_ARGS+=("$arg") ;;
+  esac
+done
+set -- "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
 
 # Map product → workflow file and default repo URL
 case "$PRODUCT" in
@@ -115,6 +130,31 @@ if [[ ! -f "$WORKFLOW_PATH" ]]; then
   echo "Error: Workflow file not found: $WORKFLOW_PATH"
   echo "Create the workflow file first, then retry."
   exit 1
+fi
+
+# --- Stale dist check ---
+if [[ "$SKIP_BUILD_CHECK" != "true" ]]; then
+  DIST_ENTRY="$SCRIPT_DIR/dist/src/cli/main.js"
+  if [[ ! -f "$DIST_ENTRY" ]]; then
+    echo "Error: dist/ not found ($DIST_ENTRY)"
+    echo "  This looks like a fresh clone. Run 'npm run build' first."
+    if [[ "$AUTO_BUILD" == "true" ]]; then
+      echo "  --auto-build: running 'npm run build'..."
+      (cd "$SCRIPT_DIR" && npm run build)
+    else
+      echo "  Or re-run with --auto-build to build automatically."
+      exit 1
+    fi
+  elif [[ -n "$(find "$SCRIPT_DIR/src" -newer "$DIST_ENTRY" -type f 2>/dev/null)" ]]; then
+    echo "Warning: dist/ is stale — source files are newer than dist/src/cli/main.js"
+    if [[ "$AUTO_BUILD" == "true" ]]; then
+      echo "  --auto-build: running 'npm run build'..."
+      (cd "$SCRIPT_DIR" && npm run build)
+    else
+      echo "  Run 'npm run build' in symphony-ts/, or re-run with --auto-build."
+      exit 1
+    fi
+  fi
 fi
 
 echo "Launching pipeline for: $PRODUCT"

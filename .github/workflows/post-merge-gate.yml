@@ -1,0 +1,147 @@
+name: Post-Merge Gate
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        id: lint
+        run: pnpm lint
+
+      - name: Typecheck
+        id: typecheck
+        if: always() && steps.lint.outcome != 'cancelled'
+        run: pnpm typecheck
+
+      - name: Test
+        id: test
+        if: always() && steps.typecheck.outcome != 'cancelled'
+        run: pnpm test
+
+      - name: Build
+        id: build
+        if: always() && steps.test.outcome != 'cancelled'
+        run: pnpm build
+
+      - name: Create Linear issue on failure
+        if: failure()
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          COMMIT_SHA="${{ github.sha }}"
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # Extract PR number from merge commit message (GitHub format: "Merge pull request #N ..." or squash "... (#N)")
+          PR_NUMBER=$(git log -1 --pretty=%s | grep -oP '#\K[0-9]+' | head -1)
+          PR_INFO=""
+          if [ -n "$PR_NUMBER" ]; then
+            PR_INFO="**PR:** #${PR_NUMBER}"
+          fi
+
+          # Determine which steps failed
+          FAILED_STEPS=""
+          if [ "${{ steps.lint.outcome }}" = "failure" ]; then
+            FAILED_STEPS="${FAILED_STEPS}\n- Lint"
+          fi
+          if [ "${{ steps.typecheck.outcome }}" = "failure" ]; then
+            FAILED_STEPS="${FAILED_STEPS}\n- Typecheck"
+          fi
+          if [ "${{ steps.test.outcome }}" = "failure" ]; then
+            FAILED_STEPS="${FAILED_STEPS}\n- Test"
+          fi
+          if [ "${{ steps.build.outcome }}" = "failure" ]; then
+            FAILED_STEPS="${FAILED_STEPS}\n- Build"
+          fi
+
+          TITLE="pipeline-halt: post-merge gate failure on ${SHORT_SHA}"
+
+          BODY="## Post-Merge Gate Failure\n\n**Commit:** ${COMMIT_SHA}\n${PR_INFO}\n**Run:** ${RUN_URL}\n\n**Failed steps:**${FAILED_STEPS}"
+
+          # Look up SYMPH team ID and pipeline-halt label via Linear API
+          TEAM_QUERY='{ "query": "{ teams(filter: { key: { eq: \"SYMPH\" } }) { nodes { id } } }" }'
+          TEAM_RESPONSE=$(curl -s -X POST https://api.linear.app/graphql \
+            -H "Content-Type: application/json" \
+            -H "Authorization: ${LINEAR_API_KEY}" \
+            -d "$TEAM_QUERY")
+          TEAM_ID=$(echo "$TEAM_RESPONSE" | jq -r '.data.teams.nodes[0].id')
+
+          if [ -z "$TEAM_ID" ] || [ "$TEAM_ID" = "null" ]; then
+            echo "::error::Failed to look up SYMPH team ID from Linear API"
+            exit 1
+          fi
+
+          # Find or create the pipeline-halt label
+          LABEL_QUERY='{ "query": "{ issueLabels(filter: { name: { eq: \"pipeline-halt\" } }) { nodes { id } } }" }'
+          LABEL_RESPONSE=$(curl -s -X POST https://api.linear.app/graphql \
+            -H "Content-Type: application/json" \
+            -H "Authorization: ${LINEAR_API_KEY}" \
+            -d "$LABEL_QUERY")
+          LABEL_ID=$(echo "$LABEL_RESPONSE" | jq -r '.data.issueLabels.nodes[0].id')
+
+          LABEL_IDS_PARAM=""
+          if [ -n "$LABEL_ID" ] && [ "$LABEL_ID" != "null" ]; then
+            LABEL_IDS_PARAM=", labelIds: [\"${LABEL_ID}\"]"
+          else
+            # Create the label on the SYMPH team
+            CREATE_LABEL_QUERY=$(cat <<GRAPHQL
+          { "query": "mutation { issueLabelCreate(input: { name: \"pipeline-halt\", color: \"#eb5757\", teamId: \"${TEAM_ID}\" }) { issueLabel { id } success } }" }
+          GRAPHQL
+          )
+            CREATE_LABEL_RESPONSE=$(curl -s -X POST https://api.linear.app/graphql \
+              -H "Content-Type: application/json" \
+              -H "Authorization: ${LINEAR_API_KEY}" \
+              -d "$CREATE_LABEL_QUERY")
+            NEW_LABEL_ID=$(echo "$CREATE_LABEL_RESPONSE" | jq -r '.data.issueLabelCreate.issueLabel.id')
+            if [ -n "$NEW_LABEL_ID" ] && [ "$NEW_LABEL_ID" != "null" ]; then
+              LABEL_IDS_PARAM=", labelIds: [\"${NEW_LABEL_ID}\"]"
+            fi
+          fi
+
+          # Escape the body for JSON
+          ESCAPED_BODY=$(echo -e "$BODY" | jq -Rs .)
+
+          # Create the issue
+          CREATE_ISSUE_QUERY=$(cat <<GRAPHQL
+          { "query": "mutation { issueCreate(input: { teamId: \"${TEAM_ID}\", title: \"${TITLE}\", description: ${ESCAPED_BODY}${LABEL_IDS_PARAM} }) { issue { id identifier url } success } }" }
+          GRAPHQL
+          )
+
+          ISSUE_RESPONSE=$(curl -s -X POST https://api.linear.app/graphql \
+            -H "Content-Type: application/json" \
+            -H "Authorization: ${LINEAR_API_KEY}" \
+            -d "$CREATE_ISSUE_QUERY")
+
+          ISSUE_URL=$(echo "$ISSUE_RESPONSE" | jq -r '.data.issueCreate.issue.url')
+          ISSUE_ID=$(echo "$ISSUE_RESPONSE" | jq -r '.data.issueCreate.issue.identifier')
+
+          if [ -z "$ISSUE_URL" ] || [ "$ISSUE_URL" = "null" ]; then
+            echo "::error::Failed to create Linear issue"
+            echo "Response: $ISSUE_RESPONSE"
+            exit 1
+          fi
+
+          echo "::notice::Created Linear issue ${ISSUE_ID}: ${ISSUE_URL}"

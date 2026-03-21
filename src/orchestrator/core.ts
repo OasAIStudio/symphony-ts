@@ -20,8 +20,8 @@ import {
   addEndedSessionRuntime,
   applyCodexEventToOrchestratorState,
 } from "../logging/session-metrics.js";
-import type { EnsembleGateResult } from "./gate-handler.js";
 import type { IssueStateSnapshot, IssueTracker } from "../tracker/tracker.js";
+import type { EnsembleGateResult } from "./gate-handler.js";
 
 const CONTINUATION_RETRY_DELAY_MS = 1_000;
 const FAILURE_RETRY_BASE_DELAY_MS = 10_000;
@@ -90,7 +90,11 @@ export interface OrchestratorCoreOptions {
     stage: StageDefinition;
   }) => Promise<EnsembleGateResult>;
   postComment?: (issueId: string, body: string) => Promise<void>;
-  updateIssueState?: (issueId: string, issueIdentifier: string, stateName: string) => Promise<void>;
+  updateIssueState?: (
+    issueId: string,
+    issueIdentifier: string,
+    stateName: string,
+  ) => Promise<void>;
   timerScheduler?: TimerScheduler;
   now?: () => Date;
 }
@@ -370,7 +374,10 @@ export class OrchestratorCore {
         );
       }
 
-      const transition = this.advanceStage(input.issueId, runningEntry.identifier);
+      const transition = this.advanceStage(
+        input.issueId,
+        runningEntry.identifier,
+      );
       if (transition === "completed") {
         this.state.completed.add(input.issueId);
         this.releaseClaim(input.issueId);
@@ -449,9 +456,19 @@ export class OrchestratorCore {
       delete this.state.issueReworkCounts[issueId];
       delete this.state.issueExecutionHistory[issueId];
       // Fire linearState update for the terminal stage (e.g., move to "Done")
-      if (nextStage.linearState !== null && this.updateIssueState !== undefined) {
-        void this.updateIssueState(issueId, issueIdentifier, nextStage.linearState).catch((err) => {
-          console.warn(`[orchestrator] Failed to update terminal state for ${issueIdentifier}:`, err);
+      if (
+        nextStage.linearState !== null &&
+        this.updateIssueState !== undefined
+      ) {
+        void this.updateIssueState(
+          issueId,
+          issueIdentifier,
+          nextStage.linearState,
+        ).catch((err) => {
+          console.warn(
+            `[orchestrator] Failed to update terminal state for ${issueIdentifier}:`,
+            err,
+          );
         });
       }
       return "completed";
@@ -512,7 +529,11 @@ export class OrchestratorCore {
     failureClass: string,
     agentMessage: string | undefined,
   ): string {
-    const sections = [`## Review Findings`, "", `**Failure class:** ${failureClass}`];
+    const sections = [
+      "## Review Findings",
+      "",
+      `**Failure class:** ${failureClass}`,
+    ];
     if (agentMessage !== undefined && agentMessage.trim() !== "") {
       sections.push("", agentMessage);
     }
@@ -558,7 +579,11 @@ export class OrchestratorCore {
 
     // Check if the current stage itself has onRework (agent-type review stages)
     const currentStage = stagesConfig.stages[currentStageName];
-    if (currentStage !== undefined && currentStage.type === "agent" && currentStage.transitions.onRework !== null) {
+    if (
+      currentStage !== undefined &&
+      currentStage.type === "agent" &&
+      currentStage.transitions.onRework !== null
+    ) {
       // Use reworkGate directly — it now supports agent stages with onRework
       const reworkTarget = this.reworkGate(issueId);
       if (reworkTarget === "escalated") {
@@ -570,7 +595,11 @@ export class OrchestratorCore {
         return null;
       }
       if (reworkTarget !== null) {
-        this.postReviewFindingsComment(issueId, runningEntry.identifier, agentMessage);
+        this.postReviewFindingsComment(
+          issueId,
+          runningEntry.identifier,
+          agentMessage,
+        );
         return this.scheduleRetry(issueId, 1, {
           identifier: runningEntry.identifier,
           error: `agent review failure: rework to ${reworkTarget}`,
@@ -596,6 +625,7 @@ export class OrchestratorCore {
     }
 
     // Use the gate's rework logic (reuses reworkGate by temporarily setting stage)
+    // biome-ignore lint/style/noNonNullAssertion: issueId is guaranteed to exist in issueStages at this point
     const savedStage = this.state.issueStages[issueId]!;
     this.state.issueStages[issueId] = gateName;
     let reworkTarget: string | "escalated" | null;
@@ -613,7 +643,8 @@ export class OrchestratorCore {
         nextRetryAttempt(runningEntry.retryAttempt),
         {
           identifier: runningEntry.identifier,
-          error: "agent reported failure: review (no rework target on downstream gate)",
+          error:
+            "agent reported failure: review (no rework target on downstream gate)",
           delayType: "failure",
         },
       );
@@ -630,7 +661,11 @@ export class OrchestratorCore {
     }
 
     // Rework target set by reworkGate — post findings and schedule continuation
-    this.postReviewFindingsComment(issueId, runningEntry.identifier, agentMessage);
+    this.postReviewFindingsComment(
+      issueId,
+      runningEntry.identifier,
+      agentMessage,
+    );
     return this.scheduleRetry(issueId, 1, {
       identifier: runningEntry.identifier,
       error: `agent review failure: rework to ${reworkTarget}`,
@@ -652,7 +687,10 @@ export class OrchestratorCore {
     }
     const comment = this.formatReviewFindingsComment("review", agentMessage);
     void this.postComment(issueId, comment).catch((err) => {
-      console.warn(`[orchestrator] Failed to post review findings comment for ${issueIdentifier}:`, err);
+      console.warn(
+        `[orchestrator] Failed to post review findings comment for ${issueIdentifier}:`,
+        err,
+      );
     });
   }
 
@@ -691,7 +729,10 @@ export class OrchestratorCore {
       }
 
       // Agent-type stages with onRework can also serve as rework gates
-      if (nextStage.type === "agent" && nextStage.transitions.onRework !== null) {
+      if (
+        nextStage.type === "agent" &&
+        nextStage.transitions.onRework !== null
+      ) {
         return next;
       }
 
@@ -710,18 +751,31 @@ export class OrchestratorCore {
     issueIdentifier: string,
     comment: string,
   ): Promise<void> {
-    if (this.config.escalationState !== null && this.updateIssueState !== undefined) {
+    if (
+      this.config.escalationState !== null &&
+      this.updateIssueState !== undefined
+    ) {
       try {
-        await this.updateIssueState(issueId, issueIdentifier, this.config.escalationState);
+        await this.updateIssueState(
+          issueId,
+          issueIdentifier,
+          this.config.escalationState,
+        );
       } catch (err) {
-        console.warn(`[orchestrator] Failed to update escalation state for ${issueIdentifier}:`, err);
+        console.warn(
+          `[orchestrator] Failed to update escalation state for ${issueIdentifier}:`,
+          err,
+        );
       }
     }
     if (this.postComment !== undefined) {
       try {
         await this.postComment(issueId, comment);
       } catch (err) {
-        console.warn(`[orchestrator] Failed to post escalation comment for ${issueIdentifier}:`, err);
+        console.warn(
+          `[orchestrator] Failed to post escalation comment for ${issueIdentifier}:`,
+          err,
+        );
       }
     }
   }
@@ -735,6 +789,7 @@ export class OrchestratorCore {
     stage: StageDefinition,
   ): Promise<void> {
     try {
+      // biome-ignore lint/style/noNonNullAssertion: runEnsembleGate is guaranteed to be set when this method is called
       const result = await this.runEnsembleGate!({ issue, stage });
 
       if (result.aggregate === "pass") {
@@ -755,15 +810,26 @@ export class OrchestratorCore {
             delayType: "continuation",
           });
         } else if (reworkTarget === "escalated") {
-          if (this.config.escalationState !== null && this.updateIssueState !== undefined) {
+          if (
+            this.config.escalationState !== null &&
+            this.updateIssueState !== undefined
+          ) {
             try {
-              await this.updateIssueState(issue.id, issue.identifier, this.config.escalationState);
+              await this.updateIssueState(
+                issue.id,
+                issue.identifier,
+                this.config.escalationState,
+              );
             } catch (err) {
-              console.warn(`[orchestrator] Failed to update escalation state for ${issue.identifier}:`, err);
+              console.warn(
+                `[orchestrator] Failed to update escalation state for ${issue.identifier}:`,
+                err,
+              );
             }
           }
           if (this.postComment !== undefined) {
-            const maxRework = stage.type === "gate" ? (stage.maxRework ?? 0) : 0;
+            const maxRework =
+              stage.type === "gate" ? (stage.maxRework ?? 0) : 0;
             try {
               await this.postComment(
                 issue.id,
@@ -771,7 +837,10 @@ export class OrchestratorCore {
               );
             } catch (err) {
               // Comment posting is best-effort — don't fail the gate on it.
-              console.warn(`[orchestrator] Failed to post escalation comment for ${issue.identifier}:`, err);
+              console.warn(
+                `[orchestrator] Failed to post escalation comment for ${issue.identifier}:`,
+                err,
+              );
             }
           }
         }
@@ -835,7 +904,13 @@ export class OrchestratorCore {
     }
 
     // Allow gate stages (always) and agent stages with onRework set
-    if (currentStage.type !== "gate" && !(currentStage.type === "agent" && currentStage.transitions.onRework !== null)) {
+    if (
+      currentStage.type !== "gate" &&
+      !(
+        currentStage.type === "agent" &&
+        currentStage.transitions.onRework !== null
+      )
+    ) {
       return null;
     }
 
@@ -941,8 +1016,7 @@ export class OrchestratorCore {
     let stageName: string | null = null;
 
     if (stagesConfig !== null) {
-      stageName =
-        this.state.issueStages[issue.id] ?? stagesConfig.initialStage;
+      stageName = this.state.issueStages[issue.id] ?? stagesConfig.initialStage;
       stage = stagesConfig.stages[stageName] ?? null;
 
       if (stage !== null && stage.type === "terminal") {
@@ -952,8 +1026,15 @@ export class OrchestratorCore {
         delete this.state.issueReworkCounts[issue.id];
         // Fire linearState update for the terminal stage (e.g., move to "Done")
         if (stage.linearState !== null && this.updateIssueState !== undefined) {
-          void this.updateIssueState(issue.id, issue.identifier, stage.linearState).catch((err) => {
-            console.warn(`[orchestrator] Failed to update terminal state for ${issue.identifier}:`, err);
+          void this.updateIssueState(
+            issue.id,
+            issue.identifier,
+            stage.linearState,
+          ).catch((err) => {
+            console.warn(
+              `[orchestrator] Failed to update terminal state for ${issue.identifier}:`,
+              err,
+            );
           });
         }
         return false;
@@ -965,9 +1046,16 @@ export class OrchestratorCore {
 
         if (stage.linearState !== null && this.updateIssueState !== undefined) {
           try {
-            await this.updateIssueState(issue.id, issue.identifier, stage.linearState);
+            await this.updateIssueState(
+              issue.id,
+              issue.identifier,
+              stage.linearState,
+            );
           } catch (err) {
-            console.warn(`[orchestrator] Failed to update issue state for ${issue.identifier}:`, err);
+            console.warn(
+              `[orchestrator] Failed to update issue state for ${issue.identifier}:`,
+              err,
+            );
           }
         }
 
@@ -985,18 +1073,35 @@ export class OrchestratorCore {
       // Track the issue's current stage
       this.state.issueStages[issue.id] = stageName;
 
-      if (stage?.linearState !== null && stage?.linearState !== undefined && this.updateIssueState !== undefined) {
+      if (
+        stage?.linearState !== null &&
+        stage?.linearState !== undefined &&
+        this.updateIssueState !== undefined
+      ) {
         try {
-          await this.updateIssueState(issue.id, issue.identifier, stage.linearState);
+          await this.updateIssueState(
+            issue.id,
+            issue.identifier,
+            stage.linearState,
+          );
         } catch (err) {
-          console.warn(`[orchestrator] Failed to update issue state for ${issue.identifier}:`, err);
+          console.warn(
+            `[orchestrator] Failed to update issue state for ${issue.identifier}:`,
+            err,
+          );
         }
       }
     }
 
     try {
       const reworkCount = this.state.issueReworkCounts[issue.id] ?? 0;
-      const spawned = await this.spawnWorker({ issue, attempt, stage, stageName, reworkCount });
+      const spawned = await this.spawnWorker({
+        issue,
+        attempt,
+        stage,
+        stageName,
+        reworkCount,
+      });
       this.state.running[issue.id] = {
         ...createEmptyLiveSession(),
         issue,

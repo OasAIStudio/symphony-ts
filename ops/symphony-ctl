@@ -1,0 +1,669 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# symphony-ctl — manage symphony-ts as a macOS launchd service
+# Usage: symphony-ctl {install|uninstall|start|stop|restart|status|logs|tail|cleanup}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SYMPHONY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Defaults — override via environment or .env
+SYMPHONY_PROJECT="${SYMPHONY_PROJECT:-symphony}"
+SERVICE_LABEL="com.symphony.${SYMPHONY_PROJECT}"
+PLIST_PATH="$HOME/Library/LaunchAgents/${SERVICE_LABEL}.plist"
+LOG_DIR="$HOME/Library/Logs/symphony/${SYMPHONY_PROJECT}"
+ENV_FILE="${SYMPHONY_ENV_FILE:-$SYMPHONY_ROOT/.env}"
+WORKFLOW_PATH="${SYMPHONY_WORKFLOW:-$SYMPHONY_ROOT/WORKFLOW.md}"
+NODE_BIN="${SYMPHONY_NODE:-$(which node 2>/dev/null || echo /opt/homebrew/bin/node)}"
+CLI_JS="$SYMPHONY_ROOT/dist/src/cli/main.js"
+
+# Colors (disabled if not a terminal)
+if [[ -t 1 ]]; then
+  RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; CYAN='\033[0;36m'; NC='\033[0m'
+else
+  RED=''; GREEN=''; YELLOW=''; CYAN=''; NC=''
+fi
+
+info()  { echo -e "${CYAN}▸${NC} $*"; }
+ok()    { echo -e "${GREEN}✓${NC} $*"; }
+warn()  { echo -e "${YELLOW}⚠${NC} $*" >&2; }
+die()   { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
+
+# --- Precondition checks ---
+
+check_node() {
+  [[ -x "$NODE_BIN" ]] || die "Node not found at $NODE_BIN. Set SYMPHONY_NODE or install Node >= 22."
+}
+
+check_built() {
+  [[ -f "$CLI_JS" ]] || die "Built CLI not found at $CLI_JS. Run 'pnpm build' in $SYMPHONY_ROOT first."
+}
+
+check_env_file() {
+  [[ -f "$ENV_FILE" ]] || die ".env file not found at $ENV_FILE. Set SYMPHONY_ENV_FILE to override."
+}
+
+check_workflow() {
+  [[ -f "$WORKFLOW_PATH" ]] || die "WORKFLOW.md not found at $WORKFLOW_PATH. Set SYMPHONY_WORKFLOW to override."
+}
+
+check_not_installed() {
+  [[ ! -f "$PLIST_PATH" ]] || die "Service already installed at $PLIST_PATH. Run 'uninstall' first."
+}
+
+check_installed() {
+  [[ -f "$PLIST_PATH" ]] || die "Service not installed. Run 'install' first."
+}
+
+# --- .env → plist EnvironmentVariables ---
+
+generate_env_dict() {
+  local env_dict=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Skip comments and blank lines
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    # Trim leading/trailing whitespace
+    line="$(echo "$line" | xargs)"
+    [[ -z "$line" ]] && continue
+
+    local key="${line%%=*}"
+    local value="${line#*=}"
+    # Remove surrounding quotes from value
+    value="${value#\"}" ; value="${value%\"}"
+    value="${value#\'}" ; value="${value%\'}"
+    # Strip inline comments (only unquoted: space then #)
+    # Only strip if value was not quoted (quotes already removed above)
+    value="${value%% \#*}"
+
+    env_dict+="      <key>${key}</key>"$'\n'
+    env_dict+="      <string>${value}</string>"$'\n'
+  done < "$ENV_FILE"
+  echo "$env_dict"
+}
+
+# --- plist generation ---
+
+generate_plist() {
+  local env_dict
+  env_dict="$(generate_env_dict)"
+
+  cat <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${SERVICE_LABEL}</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>${NODE_BIN}</string>
+        <string>${CLI_JS}</string>
+        <string>${WORKFLOW_PATH}</string>
+        <string>--acknowledge-high-trust-preview</string>
+        <string>--logs-root</string>
+        <string>${LOG_DIR}</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>${SYMPHONY_ROOT}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PATH</key>
+      <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+${env_dict}    </dict>
+
+    <key>StandardOutPath</key>
+    <string>${LOG_DIR}/stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>${LOG_DIR}/stderr.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
+PLIST
+}
+
+# --- Commands ---
+
+cmd_install() {
+  check_node
+  check_built
+  check_env_file
+  check_workflow
+  check_not_installed
+
+  mkdir -p "$LOG_DIR"
+  mkdir -p "$(dirname "$PLIST_PATH")"
+
+  generate_plist > "$PLIST_PATH"
+  ok "Plist written to $PLIST_PATH"
+
+  launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH"
+  ok "Service registered: $SERVICE_LABEL"
+  info "Run 'symphony-ctl start' to begin polling."
+}
+
+cmd_uninstall() {
+  check_installed
+
+  # Stop first if running
+  if launchctl print "gui/$(id -u)/${SERVICE_LABEL}" &>/dev/null; then
+    launchctl kill SIGTERM "gui/$(id -u)/${SERVICE_LABEL}" 2>/dev/null || true
+    sleep 1
+  fi
+
+  launchctl bootout "gui/$(id -u)/${SERVICE_LABEL}" 2>/dev/null || true
+  rm -f "$PLIST_PATH"
+  ok "Service uninstalled: $SERVICE_LABEL"
+}
+
+cmd_start() {
+  check_installed
+
+  if is_running; then
+    warn "Service is already running."
+    return 0
+  fi
+
+  launchctl kickstart "gui/$(id -u)/${SERVICE_LABEL}"
+  ok "Service started: $SERVICE_LABEL"
+  info "Dashboard: http://localhost:$(get_port)"
+  info "Logs: $LOG_DIR/"
+}
+
+cmd_stop() {
+  check_installed
+
+  if ! is_running; then
+    warn "Service is not running."
+    return 0
+  fi
+
+  launchctl kill SIGTERM "gui/$(id -u)/${SERVICE_LABEL}"
+  ok "Service stopped: $SERVICE_LABEL"
+}
+
+cmd_restart() {
+  check_installed
+
+  if is_running; then
+    cmd_stop
+    sleep 1
+  fi
+  cmd_start
+}
+
+cmd_status() {
+  if [[ ! -f "$PLIST_PATH" ]]; then
+    info "Service not installed."
+    return 0
+  fi
+
+  echo ""
+  info "Service:   $SERVICE_LABEL"
+  info "Plist:     $PLIST_PATH"
+  info "Workflow:  $WORKFLOW_PATH"
+  info "Logs:      $LOG_DIR/"
+  info "Dashboard: http://localhost:$(get_port)"
+  echo ""
+
+  if is_running; then
+    local pid
+    pid="$(get_pid)"
+    ok "Running (PID ${pid:-unknown})"
+  else
+    warn "Not running"
+  fi
+
+  # Show last few lines of stderr if available
+  if [[ -f "$LOG_DIR/stderr.log" ]]; then
+    local size
+    size="$(wc -c < "$LOG_DIR/stderr.log" | tr -d ' ')"
+    if [[ "$size" -gt 0 ]]; then
+      echo ""
+      info "Last 5 lines of stderr.log:"
+      tail -5 "$LOG_DIR/stderr.log" | sed 's/^/  /'
+    fi
+  fi
+}
+
+cmd_logs() {
+  if [[ ! -d "$LOG_DIR" ]]; then
+    die "Log directory not found: $LOG_DIR"
+  fi
+
+  local log_file="${1:-stderr}"
+  local log_path="$LOG_DIR/${log_file}.log"
+
+  [[ -f "$log_path" ]] || die "Log file not found: $log_path"
+  less +G "$log_path"
+}
+
+cmd_tail() {
+  if [[ ! -d "$LOG_DIR" ]]; then
+    die "Log directory not found: $LOG_DIR"
+  fi
+
+  info "Tailing stderr.log (Ctrl-C to stop)..."
+  tail -f "$LOG_DIR/stderr.log" "$LOG_DIR/stdout.log" 2>/dev/null
+}
+
+# --- Helpers ---
+
+is_running() {
+  launchctl print "gui/$(id -u)/${SERVICE_LABEL}" &>/dev/null && \
+    launchctl print "gui/$(id -u)/${SERVICE_LABEL}" 2>/dev/null | grep -q 'pid = [0-9]'
+}
+
+get_pid() {
+  launchctl print "gui/$(id -u)/${SERVICE_LABEL}" 2>/dev/null | grep -oE 'pid = [0-9]+' | grep -oE '[0-9]+'
+}
+
+get_port() {
+  # Extract port from WORKFLOW frontmatter
+  if [[ -f "$WORKFLOW_PATH" ]]; then
+    local port
+    port="$(sed -n '/^---$/,/^---$/p' "$WORKFLOW_PATH" | grep -E '^\s*port:' | head -1 | awk '{print $2}')"
+    echo "${port:-4321}"
+  else
+    echo "4321"
+  fi
+}
+
+# --- Log rotation ---
+
+cmd_install_logrotate() {
+  local conf_src="$SCRIPT_DIR/com.symphony.newsyslog.conf"
+  local conf_dest="/etc/newsyslog.d/com.symphony.newsyslog.conf"
+
+  [[ -f "$conf_src" ]] || die "newsyslog config not found at $conf_src"
+
+  info "Installing log rotation config to $conf_dest"
+  sudo cp "$conf_src" "$conf_dest"
+  ok "Log rotation installed. Logs rotate at 10MB, keep 5 archives."
+  info "newsyslog checks this automatically — no restart needed."
+}
+
+# --- Cleanup ---
+
+cmd_cleanup() {
+  local execute=false
+  local skip_github=false
+  local skip_linear=false
+
+  # Parse flags
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --execute)      execute=true ;;
+      --skip-github)  skip_github=true ;;
+      --skip-linear)  skip_linear=true ;;
+      *)              die "Unknown flag: $1" ;;
+    esac
+    shift
+  done
+
+  # Load env if not already set
+  if [[ -f "$ENV_FILE" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+      line="$(echo "$line" | xargs)"
+      [[ -z "$line" ]] && continue
+      local key="${line%%=*}"
+      local value="${line#*=}"
+      value="${value#\"}" ; value="${value%\"}"
+      value="${value#\'}" ; value="${value%\'}"
+      value="${value%% \#*}"
+      # Only export if not already set
+      if [[ -z "${!key:-}" ]]; then
+        export "$key=$value"
+      fi
+    done < "$ENV_FILE"
+  fi
+
+  check_workflow
+
+  # Parse WORKFLOW frontmatter for project_slug and workspace root
+  local frontmatter
+  frontmatter="$(sed -n '/^---$/,/^---$/p' "$WORKFLOW_PATH")"
+
+  local project_slug
+  project_slug="$(echo "$frontmatter" | grep -E '^\s*project_slug:' | head -1 | awk '{print $2}')"
+  [[ -n "$project_slug" ]] || die "Could not parse project_slug from $WORKFLOW_PATH frontmatter"
+
+  local workspace_root_raw
+  workspace_root_raw="$(echo "$frontmatter" | grep -E '^\s*root:' | head -1 | awk '{print $2}')"
+  [[ -n "$workspace_root_raw" ]] || die "Could not parse workspace.root from $WORKFLOW_PATH frontmatter"
+
+  # Resolve workspace root relative to WORKFLOW_PATH directory
+  local workflow_dir
+  workflow_dir="$(cd "$(dirname "$WORKFLOW_PATH")" && pwd)"
+  local workspace_root
+  if [[ "$workspace_root_raw" == /* ]]; then
+    workspace_root="$workspace_root_raw"
+  else
+    workspace_root="$workflow_dir/$workspace_root_raw"
+  fi
+
+  # Extract GitHub owner/repo from REPO_URL
+  local github_repo=""
+  if [[ -n "${REPO_URL:-}" ]]; then
+    github_repo="$(echo "$REPO_URL" | sed -E 's|^https?://github\.com/||; s|\.git$||')"
+  fi
+
+  local dashboard_port
+  dashboard_port="$(get_port)"
+
+  if $execute; then
+    info "symphony-ctl cleanup [EXECUTING]"
+  else
+    info "symphony-ctl cleanup [DRY RUN]"
+  fi
+  echo ""
+
+  local count_workspaces=0
+  local count_prs=0
+  local count_logs=0
+  local count_stale_issues=0
+
+  # --- 1. Local workspaces ---
+  info "Local workspaces:"
+  if [[ -d "$workspace_root" ]]; then
+    local has_workspaces=false
+    for dir in "$workspace_root"/*/; do
+      [[ -d "$dir" ]] || continue
+      local uuid
+      uuid="$(basename "$dir")"
+      # Only process UUID-shaped directories
+      [[ "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || continue
+      has_workspaces=true
+
+      if $skip_linear || [[ -z "${LINEAR_API_KEY:-}" ]]; then
+        warn "  $uuid — skipped (Linear not available)"
+        continue
+      fi
+
+      # Query Linear for the issue state
+      local response
+      response="$(curl -s -X POST https://api.linear.app/graphql \
+        -H "Content-Type: application/json" \
+        -H "Authorization: $LINEAR_API_KEY" \
+        -d "{\"query\":\"{ issue(id: \\\"$uuid\\\") { identifier title state { name type } } }\"}" 2>/dev/null)" || true
+
+      local issue_id issue_state state_type
+      issue_id="$(echo "$response" | grep -o '"identifier":"[^"]*"' | head -1 | cut -d'"' -f4)"
+      issue_state="$(echo "$response" | grep -o '"name":"[^"]*"' | head -1 | cut -d'"' -f4)"
+      state_type="$(echo "$response" | grep -o '"type":"[^"]*"' | head -1 | cut -d'"' -f4)"
+
+      if [[ -z "$issue_id" ]]; then
+        # Issue not found in Linear
+        if $execute; then
+          rm -rf "$dir"
+          ok "  $uuid (issue not found) — removed"
+        else
+          ok "  $uuid (issue not found) — would remove"
+        fi
+        count_workspaces=$((count_workspaces + 1))
+      elif [[ "$state_type" == "completed" || "$state_type" == "canceled" || "$state_type" == "cancelled" ]]; then
+        if $execute; then
+          rm -rf "$dir"
+          ok "  $uuid ($issue_id, $issue_state) — removed"
+        else
+          ok "  $uuid ($issue_id, $issue_state) — would remove"
+        fi
+        count_workspaces=$((count_workspaces + 1))
+      else
+        info "  $uuid ($issue_id, $issue_state) — active, keeping"
+      fi
+    done
+    if ! $has_workspaces; then
+      info "  (none found)"
+    fi
+  else
+    info "  (workspace root not found: $workspace_root)"
+  fi
+  echo ""
+
+  # --- 2. Orphaned PRs ---
+  info "Orphaned PRs:"
+  if $skip_github; then
+    warn "  skipped (--skip-github)"
+  elif [[ -z "$github_repo" ]]; then
+    warn "  skipped (REPO_URL not set)"
+  elif ! command -v gh &>/dev/null; then
+    warn "  skipped (gh CLI not found)"
+  else
+    local pr_json
+    pr_json="$(gh pr list --repo "$github_repo" --state open --json number,title,headRefName 2>/dev/null)" || {
+      warn "  skipped (gh pr list failed)"
+      pr_json="[]"
+    }
+
+    # Use gh's --jq to extract tab-delimited fields (avoids fragile JSON parsing)
+    local pr_lines
+    pr_lines="$(gh pr list --repo "$github_repo" --state open \
+      --json number,title,headRefName \
+      --jq '.[] | [.number, .headRefName, .title] | @tsv' 2>/dev/null)" || {
+      warn "  skipped (gh pr list failed)"
+      pr_lines=""
+    }
+
+    if [[ -z "$pr_lines" ]]; then
+      info "  (no open PRs)"
+    else
+      while IFS=$'\t' read -r pr_number pr_branch pr_title; do
+        [[ -n "$pr_number" ]] || continue
+
+        # Check if branch matches pipeline pattern (eric/mob-*)
+        if [[ "$pr_branch" =~ ^eric/mob- ]]; then
+          # Extract MOB identifier from title or branch
+          local mob_id
+          mob_id="$(echo "$pr_title" | grep -oE 'MOB-[0-9]+' | head -1)"
+          [[ -n "$mob_id" ]] || mob_id="$(echo "$pr_branch" | grep -oE 'mob-[0-9]+' | head -1 | tr '[:lower:]' '[:upper:]')"
+
+          local should_close=false
+          local reason=""
+
+          if ! $skip_linear && [[ -n "${LINEAR_API_KEY:-}" ]] && [[ -n "$mob_id" ]]; then
+            # Parse team key and number from identifier (e.g., MOB-16 → team=MOB, number=16)
+            local team_key issue_number
+            team_key="$(echo "$mob_id" | cut -d'-' -f1)"
+            issue_number="$(echo "$mob_id" | cut -d'-' -f2)"
+
+            local pr_response
+            pr_response="$(curl -s -X POST https://api.linear.app/graphql \
+              -H "Content-Type: application/json" \
+              -H "Authorization: $LINEAR_API_KEY" \
+              -d "{\"query\":\"{ issues(filter: { number: { eq: $issue_number }, team: { key: { eq: \\\"$team_key\\\" } } }) { nodes { identifier state { name type } } } }\"}" 2>/dev/null)" || true
+
+            local pr_state_type
+            pr_state_type="$(echo "$pr_response" | grep -o '"type":"[^"]*"' | head -1 | cut -d'"' -f4)"
+
+            if [[ "$pr_state_type" == "completed" || "$pr_state_type" == "canceled" || "$pr_state_type" == "cancelled" ]]; then
+              should_close=true
+              local pr_issue_state
+              pr_issue_state="$(echo "$pr_response" | grep -o '"name":"[^"]*"' | head -1 | cut -d'"' -f4)"
+              reason="$mob_id is $pr_issue_state"
+            fi
+          fi
+
+          if $should_close; then
+            if $execute; then
+              gh pr close "$pr_number" --repo "$github_repo" --delete-branch 2>/dev/null && \
+                ok "  PR #$pr_number ($reason) — closed + branch deleted" || \
+                warn "  PR #$pr_number ($reason) — failed to close"
+            else
+              ok "  PR #$pr_number ($reason) — would close + delete branch"
+            fi
+            count_prs=$((count_prs + 1))
+          else
+            info "  PR #$pr_number ($pr_branch) — issue still active, keeping"
+          fi
+        fi
+      done <<< "$pr_lines"
+    fi
+  fi
+  echo ""
+
+  # --- 3. Stale "In Progress" issues ---
+  info "Stale issues:"
+  if $skip_linear || [[ -z "${LINEAR_API_KEY:-}" ]]; then
+    warn "  skipped (Linear not available)"
+  else
+    local ip_response
+    ip_response="$(curl -s -X POST https://api.linear.app/graphql \
+      -H "Content-Type: application/json" \
+      -H "Authorization: $LINEAR_API_KEY" \
+      -d "{\"query\":\"{ issues(filter: { project: { slugId: { eq: \\\"$project_slug\\\" } }, state: { name: { eq: \\\"In Progress\\\" } } }) { nodes { id identifier title state { name } } } }\"}" 2>/dev/null)" || true
+
+    # Try to get dashboard state for cross-reference
+    local dashboard_state=""
+    local dashboard_available=false
+    dashboard_state="$(curl -s --connect-timeout 2 "http://localhost:$dashboard_port/api/v1/state" 2>/dev/null)" || true
+    if [[ -n "$dashboard_state" ]] && echo "$dashboard_state" | grep -q '"agents"' 2>/dev/null; then
+      dashboard_available=true
+    fi
+
+    # Parse In Progress issues
+    local ip_issues
+    ip_issues="$(echo "$ip_response" | grep -o '"identifier":"[^"]*"' | cut -d'"' -f4 || true)"
+
+    if [[ -z "$ip_issues" ]]; then
+      info "  (no In Progress issues)"
+    else
+      local idx=0
+      while IFS= read -r ident; do
+        local ip_title
+        # Extract corresponding title (nth occurrence)
+        ip_title="$(echo "$ip_response" | grep -o '"title":"[^"]*"' | sed -n "$((idx + 1))p" | cut -d'"' -f4)"
+        idx=$((idx + 1))
+
+        local has_worker=false
+        if $dashboard_available; then
+          # Check if issue identifier appears in dashboard state
+          if echo "$dashboard_state" | grep -q "$ident" 2>/dev/null; then
+            has_worker=true
+          fi
+        fi
+
+        if $has_worker; then
+          info "  $ident \"$ip_title\" — In Progress, worker active"
+        elif $dashboard_available; then
+          warn "  $ident \"$ip_title\" — In Progress, no active worker"
+          count_stale_issues=$((count_stale_issues + 1))
+        else
+          warn "  $ident \"$ip_title\" — In Progress (dashboard unreachable, cannot verify worker)"
+          count_stale_issues=$((count_stale_issues + 1))
+        fi
+      done <<< "$ip_issues"
+    fi
+  fi
+  echo ""
+
+  # --- 4. Log files ---
+  info "Log files:"
+  local has_logs=false
+  while IFS= read -r logfile; do
+    [[ -f "$logfile" ]] || continue
+    has_logs=true
+
+    # Check age — find files older than 7 days
+    if [[ "$(uname)" == "Darwin" ]]; then
+      local file_age_days
+      local file_mod
+      file_mod="$(stat -f %m "$logfile")"
+      local now
+      now="$(date +%s)"
+      file_age_days=$(( (now - file_mod) / 86400 ))
+    else
+      local file_age_days=0
+      if find "$logfile" -mtime +7 -print | grep -q .; then
+        file_age_days=8
+      fi
+    fi
+
+    if [[ "$file_age_days" -ge 7 ]]; then
+      if $execute; then
+        rm -f "$logfile"
+        ok "  $logfile (${file_age_days}d old) — removed"
+      else
+        ok "  $logfile (${file_age_days}d old) — would remove"
+      fi
+      count_logs=$((count_logs + 1))
+    else
+      info "  $logfile (${file_age_days}d old) — recent, keeping"
+    fi
+  done < <(ls /tmp/symphony-*.log 2>/dev/null)
+  if ! $has_logs; then
+    info "  (none found)"
+  fi
+  echo ""
+
+  # --- Summary ---
+  info "Summary: $count_workspaces workspaces, $count_prs PRs, $count_stale_issues stale issues, $count_logs logs"
+  if ! $execute; then
+    info "Run with --execute to apply."
+  fi
+}
+
+# --- Main ---
+
+usage() {
+  cat <<EOF
+symphony-ctl — manage symphony-ts as a macOS launchd service
+
+Usage: symphony-ctl <command>
+
+Commands:
+  install            Register the launchd service (does not start it)
+  uninstall          Stop and remove the launchd service
+  start              Start the service
+  stop               Stop the service
+  restart            Stop and start the service
+  status             Show service status and recent logs
+  logs               Open full log in pager (default: stderr, pass 'stdout' for stdout)
+  tail               Tail both stdout and stderr logs
+  install-logrotate  Install newsyslog config for log rotation (requires sudo)
+  cleanup            Detect stale pipeline artifacts (dry-run by default)
+                       --execute       Actually remove/close artifacts
+                       --skip-github   Skip PR/branch cleanup
+                       --skip-linear   Skip Linear API queries
+
+Environment:
+  SYMPHONY_PROJECT    Project name for label/logs (default: symphony)
+  SYMPHONY_ENV_FILE   Path to .env file (default: <symphony-root>/.env)
+  SYMPHONY_WORKFLOW   Path to WORKFLOW.md (default: <symphony-root>/WORKFLOW.md)
+  SYMPHONY_NODE       Path to node binary (default: auto-detected)
+
+EOF
+}
+
+case "${1:-}" in
+  install)            cmd_install ;;
+  uninstall)          cmd_uninstall ;;
+  start)              cmd_start ;;
+  stop)               cmd_stop ;;
+  restart)            cmd_restart ;;
+  status)             cmd_status ;;
+  logs)               cmd_logs "${2:-stderr}" ;;
+  tail)               cmd_tail ;;
+  install-logrotate)  cmd_install_logrotate ;;
+  cleanup)            shift; cmd_cleanup "$@" ;;
+  -h|--help)          usage ;;
+  *)                  usage; exit 1 ;;
+esac

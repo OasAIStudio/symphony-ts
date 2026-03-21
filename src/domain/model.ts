@@ -178,7 +178,9 @@ const STAGE_FAILED_REGEX = /\[STAGE_FAILED:\s*(verify|review|spec|infra)\s*\]/;
  * Parse a `[STAGE_FAILED: class]` signal from agent output text.
  * Returns the parsed failure signal or null if no signal is found.
  */
-export function parseFailureSignal(text: string | null | undefined): FailureSignal | null {
+export function parseFailureSignal(
+  text: string | null | undefined,
+): FailureSignal | null {
   if (text === null || text === undefined) {
     return null;
   }

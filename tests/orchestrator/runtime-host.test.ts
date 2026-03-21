@@ -335,7 +335,9 @@ describe("OrchestratorRuntimeHost", () => {
     });
     await host.flushEvents();
 
-    const turnCompletedEntry = entries.find((e) => e.event === "turn_completed");
+    const turnCompletedEntry = entries.find(
+      (e) => e.event === "turn_completed",
+    );
     expect(turnCompletedEntry).toBeDefined();
     expect(turnCompletedEntry).toMatchObject({
       event: "turn_completed",

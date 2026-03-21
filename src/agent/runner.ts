@@ -8,9 +8,10 @@ import {
 } from "../codex/app-server-client.js";
 import { createLinearGraphqlDynamicTool } from "../codex/linear-graphql-tool.js";
 import { createWorkpadSyncDynamicTool } from "../codex/workpad-sync-tool.js";
-import type { ResolvedWorkflowConfig, StageDefinition } from "../config/types.js";
-import { createRunnerFromConfig, isAiSdkRunner } from "../runners/factory.js";
-import type { RunnerKind } from "../runners/types.js";
+import type {
+  ResolvedWorkflowConfig,
+  StageDefinition,
+} from "../config/types.js";
 import {
   type Issue,
   type LiveSession,
@@ -22,6 +23,8 @@ import {
   parseFailureSignal,
 } from "../domain/model.js";
 import { applyCodexEventToSession } from "../logging/session-metrics.js";
+import { createRunnerFromConfig, isAiSdkRunner } from "../runners/factory.js";
+import type { RunnerKind } from "../runners/types.js";
 import type { IssueTracker } from "../tracker/tracker.js";
 import { WorkspaceHookRunner } from "../workspace/hooks.js";
 import { validateWorkspaceCwd } from "../workspace/path-safety.js";
@@ -186,7 +189,8 @@ export class AgentRunner {
 
     // Resolve effective config from stage overrides, falling back to global
     const stage = input.stage ?? null;
-    const effectiveRunnerKind = (stage?.runner ?? this.config.runner.kind) as RunnerKind;
+    const effectiveRunnerKind = (stage?.runner ??
+      this.config.runner.kind) as RunnerKind;
     const effectiveModel = stage?.model ?? this.config.runner.model;
     const effectiveMaxTurns = stage?.maxTurns ?? this.config.agent.maxTurns;
     const effectivePromptTemplate = stage?.prompt ?? this.config.promptTemplate;
@@ -202,7 +206,11 @@ export class AgentRunner {
       // On fresh dispatch with stages at the initial stage, remove stale workspace
       // for a clean start.  For flat dispatch (no stages) or continuation attempts,
       // preserve the workspace so interrupted work survives restarts.
-      if (input.attempt === null && input.stageName !== null && input.stageName === (this.config.stages?.initialStage ?? null)) {
+      if (
+        input.attempt === null &&
+        input.stageName !== null &&
+        input.stageName === (this.config.stages?.initialStage ?? null)
+      ) {
         try {
           await this.workspaceManager.removeForIssue(issue.id);
         } catch {
@@ -316,10 +324,13 @@ export class AgentRunner {
         });
 
         // Early exit: agent signaled stage completion or failure
-        if (lastTurn.message !== null && lastTurn.message.trimEnd().endsWith("[STAGE_COMPLETE]")) {
+        if (lastTurn.message?.trimEnd().endsWith("[STAGE_COMPLETE]")) {
           break;
         }
-        if (lastTurn.message !== null && parseFailureSignal(lastTurn.message) !== null) {
+        if (
+          lastTurn.message !== null &&
+          parseFailureSignal(lastTurn.message) !== null
+        ) {
           break;
         }
 
@@ -332,6 +343,7 @@ export class AgentRunner {
             status: "failed",
             failedPhase: runAttempt.status,
             issue,
+            // biome-ignore lint/style/noNonNullAssertion: workspace is assigned before this point in the run loop
             workspace: workspace!,
             runAttempt: { ...runAttempt },
             liveSession: { ...liveSession },

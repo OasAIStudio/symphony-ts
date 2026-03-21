@@ -1,7 +1,10 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CodexClientEvent } from "../../src/codex/app-server-client.js";
-import { ClaudeCodeRunner, resolveClaudeModelId } from "../../src/runners/claude-code-runner.js";
+import {
+  ClaudeCodeRunner,
+  resolveClaudeModelId,
+} from "../../src/runners/claude-code-runner.js";
 
 // Mock the AI SDK generateText
 vi.mock("ai", () => ({
@@ -17,9 +20,9 @@ vi.mock("node:fs", () => ({
   statSync: vi.fn(() => ({ mtimeMs: 1000 })),
 }));
 
+import { statSync } from "node:fs";
 import { generateText } from "ai";
 import { claudeCode } from "ai-sdk-provider-claude-code";
-import { statSync } from "node:fs";
 
 const mockGenerateText = vi.mocked(generateText);
 const mockClaudeCode = vi.mocked(claudeCode);
@@ -66,7 +69,10 @@ describe("ClaudeCodeRunner", () => {
       title: "ABC-123: Fix the bug",
     });
 
-    expect(mockClaudeCode).toHaveBeenCalledWith("opus", { cwd: "/tmp/workspace", permissionMode: "bypassPermissions" });
+    expect(mockClaudeCode).toHaveBeenCalledWith("opus", {
+      cwd: "/tmp/workspace",
+      permissionMode: "bypassPermissions",
+    });
     expect(mockGenerateText).toHaveBeenCalledWith(
       expect.objectContaining({
         model: "mock-claude-model",
@@ -122,9 +128,7 @@ describe("ClaudeCodeRunner", () => {
   });
 
   it("emits turn_failed on error and returns failed status", async () => {
-    mockGenerateText.mockRejectedValueOnce(
-      new Error("Rate limit exceeded"),
-    );
+    mockGenerateText.mockRejectedValueOnce(new Error("Rate limit exceeded"));
 
     const events: CodexClientEvent[] = [];
     const runner = new ClaudeCodeRunner({
@@ -278,7 +282,10 @@ describe("ClaudeCodeRunner", () => {
     await runner.startSession({ prompt: "test", title: "test" });
 
     // Should resolve "claude-sonnet-4-5" → "sonnet"
-    expect(mockClaudeCode).toHaveBeenCalledWith("sonnet", { cwd: "/tmp/workspace", permissionMode: "bypassPermissions" });
+    expect(mockClaudeCode).toHaveBeenCalledWith("sonnet", {
+      cwd: "/tmp/workspace",
+      permissionMode: "bypassPermissions",
+    });
   });
 
   it("passes abortSignal to generateText for subprocess cleanup", async () => {
@@ -328,11 +335,16 @@ describe("ClaudeCodeRunner", () => {
 
     // Start a turn but don't await — the async function runs synchronously
     // up to the first await (generateText), setting activeTurnController
-    const turnPromise = runner.startSession({ prompt: "long task", title: "test" });
+    const turnPromise = runner.startSession({
+      prompt: "long task",
+      title: "test",
+    });
 
     // The activeTurnController should be set synchronously before the await
     // Access the private field to get the controller directly
-    const controller = (runner as unknown as { activeTurnController: AbortController | null }).activeTurnController;
+    const controller = (
+      runner as unknown as { activeTurnController: AbortController | null }
+    ).activeTurnController;
     expect(controller).not.toBeNull();
     expect(controller!.signal.aborted).toBe(false);
 
@@ -384,18 +396,25 @@ describe("ClaudeCodeRunner heartbeat", () => {
       heartbeatIntervalMs: 5000,
     });
 
-    const turnPromise = runner.startSession({ prompt: "long task", title: "test" });
+    const turnPromise = runner.startSession({
+      prompt: "long task",
+      title: "test",
+    });
 
     // Initial poll — no change, no heartbeat
     vi.advanceTimersByTime(5000);
-    expect(events.filter((e) => e.event === "activity_heartbeat")).toHaveLength(0);
+    expect(events.filter((e) => e.event === "activity_heartbeat")).toHaveLength(
+      0,
+    );
 
     // Simulate a git index change (only git, not workspace dir)
     mtimeByPath["/tmp/workspace/.git/index"] = 2000;
     vi.advanceTimersByTime(5000);
     const heartbeats = events.filter((e) => e.event === "activity_heartbeat");
     expect(heartbeats).toHaveLength(1);
-    expect(heartbeats[0]!.message).toBe("workspace file change detected (git index)");
+    expect(heartbeats[0]!.message).toBe(
+      "workspace file change detected (git index)",
+    );
 
     // Resolve the turn
     resolveFn!({
@@ -421,18 +440,25 @@ describe("ClaudeCodeRunner heartbeat", () => {
       heartbeatIntervalMs: 5000,
     });
 
-    const turnPromise = runner.startSession({ prompt: "review task", title: "test" });
+    const turnPromise = runner.startSession({
+      prompt: "review task",
+      title: "test",
+    });
 
     // Initial poll — no change
     vi.advanceTimersByTime(5000);
-    expect(events.filter((e) => e.event === "activity_heartbeat")).toHaveLength(0);
+    expect(events.filter((e) => e.event === "activity_heartbeat")).toHaveLength(
+      0,
+    );
 
     // Simulate workspace dir change only (e.g. review agent creating temp file)
     mtimeByPath["/tmp/workspace"] = 2000;
     vi.advanceTimersByTime(5000);
     const heartbeats = events.filter((e) => e.event === "activity_heartbeat");
     expect(heartbeats).toHaveLength(1);
-    expect(heartbeats[0]!.message).toBe("workspace file change detected (workspace dir)");
+    expect(heartbeats[0]!.message).toBe(
+      "workspace file change detected (workspace dir)",
+    );
 
     resolveFn!({
       text: "done",
@@ -465,7 +491,9 @@ describe("ClaudeCodeRunner heartbeat", () => {
     vi.advanceTimersByTime(5000);
     const heartbeats = events.filter((e) => e.event === "activity_heartbeat");
     expect(heartbeats).toHaveLength(1);
-    expect(heartbeats[0]!.message).toBe("workspace file change detected (git index and workspace dir)");
+    expect(heartbeats[0]!.message).toBe(
+      "workspace file change detected (git index and workspace dir)",
+    );
 
     resolveFn!({
       text: "done",
@@ -494,7 +522,9 @@ describe("ClaudeCodeRunner heartbeat", () => {
 
     // Advance through multiple intervals with no mtime change
     vi.advanceTimersByTime(20000);
-    expect(events.filter((e) => e.event === "activity_heartbeat")).toHaveLength(0);
+    expect(events.filter((e) => e.event === "activity_heartbeat")).toHaveLength(
+      0,
+    );
 
     resolveFn!({
       text: "done",
@@ -531,7 +561,9 @@ describe("ClaudeCodeRunner heartbeat", () => {
     mtimeByPath["/tmp/workspace/.git/index"] = 9999;
     mtimeByPath["/tmp/workspace"] = 9999;
     vi.advanceTimersByTime(10000);
-    expect(events.filter((e) => e.event === "activity_heartbeat")).toHaveLength(0);
+    expect(events.filter((e) => e.event === "activity_heartbeat")).toHaveLength(
+      0,
+    );
   });
 
   it("does not start heartbeat when heartbeatIntervalMs is 0", async () => {
@@ -555,7 +587,9 @@ describe("ClaudeCodeRunner heartbeat", () => {
     mtimeByPath["/tmp/workspace/.git/index"] = 9999;
     mtimeByPath["/tmp/workspace"] = 9999;
     vi.advanceTimersByTime(20000);
-    expect(events.filter((e) => e.event === "activity_heartbeat")).toHaveLength(0);
+    expect(events.filter((e) => e.event === "activity_heartbeat")).toHaveLength(
+      0,
+    );
 
     resolveFn!({
       text: "done",
@@ -593,7 +627,9 @@ describe("ClaudeCodeRunner heartbeat", () => {
     // No change on third tick
     vi.advanceTimersByTime(5000);
 
-    expect(events.filter((e) => e.event === "activity_heartbeat")).toHaveLength(2);
+    expect(events.filter((e) => e.event === "activity_heartbeat")).toHaveLength(
+      2,
+    );
 
     resolveFn!({
       text: "done",

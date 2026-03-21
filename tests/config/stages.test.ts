@@ -204,7 +204,11 @@ describe("validateStagesConfig", () => {
           gateType: null,
           maxRework: null,
           reviewers: [],
-          transitions: { onComplete: "review", onApprove: null, onRework: null },
+          transitions: {
+            onComplete: "review",
+            onApprove: null,
+            onRework: null,
+          },
           linearState: null,
         },
         review: {
@@ -410,7 +414,9 @@ describe("validateStagesConfig", () => {
     const result = validateStagesConfig(stages);
     expect(result.ok).toBe(false);
     expect(result.errors).toContainEqual(
-      expect.stringContaining("on_complete references unknown stage 'nonexistent'"),
+      expect.stringContaining(
+        "on_complete references unknown stage 'nonexistent'",
+      ),
     );
   });
 
@@ -525,7 +531,11 @@ describe("validateStagesConfig", () => {
           gateType: null,
           maxRework: null,
           reviewers: [],
-          transitions: { onComplete: "review", onApprove: null, onRework: null },
+          transitions: {
+            onComplete: "review",
+            onApprove: null,
+            onRework: null,
+          },
           linearState: null,
         },
         review: {
@@ -539,7 +549,11 @@ describe("validateStagesConfig", () => {
           gateType: null,
           maxRework: 3,
           reviewers: [],
-          transitions: { onComplete: "done", onApprove: null, onRework: "implement" },
+          transitions: {
+            onComplete: "done",
+            onApprove: null,
+            onRework: "implement",
+          },
           linearState: null,
         },
         done: {
@@ -578,7 +592,11 @@ describe("validateStagesConfig", () => {
           gateType: null,
           maxRework: null,
           reviewers: [],
-          transitions: { onComplete: "review", onApprove: null, onRework: null },
+          transitions: {
+            onComplete: "review",
+            onApprove: null,
+            onRework: null,
+          },
           linearState: null,
         },
         review: {
@@ -592,7 +610,11 @@ describe("validateStagesConfig", () => {
           gateType: null,
           maxRework: 3,
           reviewers: [],
-          transitions: { onComplete: "done", onApprove: null, onRework: "nonexistent" },
+          transitions: {
+            onComplete: "done",
+            onApprove: null,
+            onRework: "nonexistent",
+          },
           linearState: null,
         },
         done: {
@@ -614,7 +636,9 @@ describe("validateStagesConfig", () => {
     const result = validateStagesConfig(stages);
     expect(result.ok).toBe(false);
     expect(result.errors).toContainEqual(
-      expect.stringContaining("'review' on_rework references unknown stage 'nonexistent'"),
+      expect.stringContaining(
+        "'review' on_rework references unknown stage 'nonexistent'",
+      ),
     );
   });
 });

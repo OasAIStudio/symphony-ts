@@ -157,7 +157,12 @@ describe("AgentRunner", () => {
   it("emits promptChars and estimatedPromptTokens on agent events, with turn 1 larger than turn 2 for a long template", async () => {
     const root = await createRoot();
     const prompts: string[] = [];
-    const capturedEvents: Array<{ event: string; promptChars: number | undefined; estimatedPromptTokens: number | undefined; turnCount: number }> = [];
+    const capturedEvents: Array<{
+      event: string;
+      promptChars: number | undefined;
+      estimatedPromptTokens: number | undefined;
+      turnCount: number;
+    }> = [];
     const tracker = createTracker({
       refreshStates: [
         { id: "issue-1", identifier: "ABC-123", state: "In Progress" },
@@ -165,7 +170,8 @@ describe("AgentRunner", () => {
       ],
     });
     // Use a long template (>600 chars) so turn 1 prompt is larger than the continuation prompt
-    const longTemplate = `You are an expert software engineer working on the following issue.\n\nIssue: {{ issue.identifier }}\nTitle: {{ issue.title }}\nDescription: {{ issue.description }}\nState: {{ issue.state }}\nAttempt: {{ attempt }}\n\nInstructions:\n- Read the issue description carefully.\n- Implement all required changes.\n- Write tests for any new functionality.\n- Run the full test suite and fix any failures.\n- Follow the existing code style and conventions.\n- Write clear commit messages.\n- Open a pull request when done.\n- Do not modify unrelated code.\n- Do not skip tests.\n- Document any architectural decisions.\n`;
+    const longTemplate =
+      "You are an expert software engineer working on the following issue.\n\nIssue: {{ issue.identifier }}\nTitle: {{ issue.title }}\nDescription: {{ issue.description }}\nState: {{ issue.state }}\nAttempt: {{ attempt }}\n\nInstructions:\n- Read the issue description carefully.\n- Implement all required changes.\n- Write tests for any new functionality.\n- Run the full test suite and fix any failures.\n- Follow the existing code style and conventions.\n- Write clear commit messages.\n- Open a pull request when done.\n- Do not modify unrelated code.\n- Do not skip tests.\n- Document any architectural decisions.\n";
     const runner = new AgentRunner({
       config: { ...createConfig(root, "unused"), promptTemplate: longTemplate },
       tracker,
@@ -370,8 +376,34 @@ describe("AgentRunner", () => {
     config.stages = {
       initialStage: "investigate",
       stages: {
-        investigate: { type: "agent", runner: null, model: null, prompt: null, maxTurns: 3, timeoutMs: null, concurrency: null, gateType: null, maxRework: null, reviewers: [], transitions: { onComplete: "done", onApprove: null, onRework: null }, linearState: null },
-        done: { type: "terminal", runner: null, model: null, prompt: null, maxTurns: null, timeoutMs: null, concurrency: null, gateType: null, maxRework: null, reviewers: [], transitions: { onComplete: null, onApprove: null, onRework: null }, linearState: null },
+        investigate: {
+          type: "agent",
+          runner: null,
+          model: null,
+          prompt: null,
+          maxTurns: 3,
+          timeoutMs: null,
+          concurrency: null,
+          gateType: null,
+          maxRework: null,
+          reviewers: [],
+          transitions: { onComplete: "done", onApprove: null, onRework: null },
+          linearState: null,
+        },
+        done: {
+          type: "terminal",
+          runner: null,
+          model: null,
+          prompt: null,
+          maxTurns: null,
+          timeoutMs: null,
+          concurrency: null,
+          gateType: null,
+          maxRework: null,
+          reviewers: [],
+          transitions: { onComplete: null, onApprove: null, onRework: null },
+          linearState: null,
+        },
       },
     };
     const runner = new AgentRunner({
@@ -506,7 +538,7 @@ describe("AgentRunner", () => {
               sessionId: `thread-1-turn-${turn}`,
               usage: null,
               rateLimits: null,
-              message: `Done with investigation.\n[STAGE_COMPLETE]`,
+              message: "Done with investigation.\n[STAGE_COMPLETE]",
             };
           },
           async continueTurn(prompt: string) {
@@ -578,7 +610,7 @@ describe("AgentRunner", () => {
               sessionId: `thread-1-turn-${turn}`,
               usage: null,
               rateLimits: null,
-              message: `Tests failed.\n[STAGE_FAILED: verify]\nSee logs.`,
+              message: "Tests failed.\n[STAGE_FAILED: verify]\nSee logs.",
             };
           },
           async continueTurn(prompt: string) {
@@ -793,7 +825,9 @@ function createStubCodexClient(
         rateLimits: {
           requestsRemaining: 10 - turn,
         },
-        message: messages ? messages[turn - 1] ?? `turn ${turn}` : `turn ${turn}`,
+        message: messages
+          ? (messages[turn - 1] ?? `turn ${turn}`)
+          : `turn ${turn}`,
       };
     },
     async continueTurn(prompt: string) {
@@ -820,7 +854,9 @@ function createStubCodexClient(
         rateLimits: {
           requestsRemaining: 10 - turn,
         },
-        message: messages ? messages[turn - 1] ?? `turn ${turn}` : `turn ${turn}`,
+        message: messages
+          ? (messages[turn - 1] ?? `turn ${turn}`)
+          : `turn ${turn}`,
       };
     },
     close: overrides?.close ?? vi.fn().mockResolvedValue(undefined),

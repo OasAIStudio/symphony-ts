@@ -1,7 +1,10 @@
-import { generateText, type LanguageModel } from "ai";
+import { type LanguageModel, generateText } from "ai";
 
-import type { CodexClientEvent, CodexTurnResult } from "../codex/app-server-client.js";
 import type { AgentRunnerCodexClient } from "../agent/runner.js";
+import type {
+  CodexClientEvent,
+  CodexTurnResult,
+} from "../codex/app-server-client.js";
 
 export interface GeminiRunnerOptions {
   cwd: string;
@@ -39,10 +42,7 @@ export class GeminiRunner implements AgentRunnerCodexClient {
     return this.executeTurn(input.prompt, input.title);
   }
 
-  async continueTurn(
-    prompt: string,
-    title: string,
-  ): Promise<CodexTurnResult> {
+  async continueTurn(prompt: string, title: string): Promise<CodexTurnResult> {
     return this.executeTurn(prompt, title);
   }
 

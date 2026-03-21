@@ -200,7 +200,11 @@ describe("session metrics", () => {
     const running = createRunningEntry();
 
     const noUsageEvent = createEvent("notification");
-    const result = applyCodexEventToOrchestratorState(state, running, noUsageEvent);
+    const result = applyCodexEventToOrchestratorState(
+      state,
+      running,
+      noUsageEvent,
+    );
 
     expect(result.cacheReadTokensDelta).toBe(0);
     expect(result.cacheWriteTokensDelta).toBe(0);

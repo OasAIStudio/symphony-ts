@@ -16,5 +16,7 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-const result = spawnSync("vitest", ["run", ...translated], { stdio: "inherit" });
+const result = spawnSync("vitest", ["run", ...translated], {
+  stdio: "inherit",
+});
 process.exit(result.status ?? 1);

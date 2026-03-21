@@ -1,5 +1,5 @@
-import type { CodexClientEvent } from "../codex/app-server-client.js";
 import type { AgentRunnerCodexClient } from "../agent/runner.js";
+import type { CodexClientEvent } from "../codex/app-server-client.js";
 
 export type RunnerKind = "codex" | "claude-code" | "gemini";
 
@@ -21,4 +21,6 @@ export interface RunnerFactoryInput {
 }
 
 export type { AgentRunnerCodexClient as Runner };
-export type RunnerFactory = (input: RunnerFactoryInput) => AgentRunnerCodexClient;
+export type RunnerFactory = (
+  input: RunnerFactoryInput,
+) => AgentRunnerCodexClient;

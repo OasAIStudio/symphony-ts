@@ -1,7 +1,7 @@
-import { writeFile, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createWorkpadSyncDynamicTool } from "../../src/index.js";
 
@@ -183,9 +183,11 @@ describe("createWorkpadSyncDynamicTool", () => {
   });
 
   it("returns error when Linear API returns HTTP error", async () => {
-    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response("Internal Server Error", { status: 500 }),
-    );
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response("Internal Server Error", { status: 500 }),
+      );
     const tool = createWorkpadSyncDynamicTool({
       apiKey: "linear-token",
       fetchFn,
@@ -303,9 +305,7 @@ describe("createWorkpadSyncDynamicTool", () => {
       file_path: workpadPath,
     });
 
-    expect(fetchFn.mock.calls[0]![0]).toBe(
-      "https://custom.linear.dev/graphql",
-    );
+    expect(fetchFn.mock.calls[0]![0]).toBe("https://custom.linear.dev/graphql");
   });
 
   it("returns error when commentCreate has no comment field", async () => {

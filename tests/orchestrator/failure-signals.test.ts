@@ -96,10 +96,15 @@ describe("failure signal routing in onWorkerExit", () => {
     let issueState = "In Progress";
     const orchestrator = createStagedOrchestrator({
       escalationState: "Blocked",
-      candidates: [createIssue({ id: "1", identifier: "ISSUE-1", state: issueState })],
-      trackerFactory: () => createTracker({
-        candidatesFn: () => [createIssue({ id: "1", identifier: "ISSUE-1", state: issueState })],
-      }),
+      candidates: [
+        createIssue({ id: "1", identifier: "ISSUE-1", state: issueState }),
+      ],
+      trackerFactory: () =>
+        createTracker({
+          candidatesFn: () => [
+            createIssue({ id: "1", identifier: "ISSUE-1", state: issueState }),
+          ],
+        }),
     });
 
     await orchestrator.pollTick();
@@ -122,9 +127,12 @@ describe("failure signal routing in onWorkerExit", () => {
     let issueState = "In Progress";
     const orchestrator = createStagedOrchestrator({
       escalationState: "Blocked",
-      trackerFactory: () => createTracker({
-        candidatesFn: () => [createIssue({ id: "1", identifier: "ISSUE-1", state: issueState })],
-      }),
+      trackerFactory: () =>
+        createTracker({
+          candidatesFn: () => [
+            createIssue({ id: "1", identifier: "ISSUE-1", state: issueState }),
+          ],
+        }),
     });
 
     await orchestrator.pollTick();
@@ -568,11 +576,15 @@ describe("agent-type review stage rework routing", () => {
   });
 
   it("passes correct reworkCount to spawnWorker during agent review rework cycle", async () => {
-    const spawnCalls: Array<{ reworkCount: number; stageName: string | null }> = [];
+    const spawnCalls: Array<{ reworkCount: number; stageName: string | null }> =
+      [];
     const orchestrator = createStagedOrchestrator({
       stages: createAgentReviewWorkflowConfig(),
       onSpawn: (input) => {
-        spawnCalls.push({ reworkCount: input.reworkCount, stageName: input.stageName });
+        spawnCalls.push({
+          reworkCount: input.reworkCount,
+          stageName: input.stageName,
+        });
       },
     });
 
@@ -623,7 +635,8 @@ describe("review findings comment posting on agent review failure", () => {
     orchestrator.onWorkerExit({
       issueId: "1",
       outcome: "normal",
-      agentMessage: "Missing null check in handler.ts line 42\n[STAGE_FAILED: review]",
+      agentMessage:
+        "Missing null check in handler.ts line 42\n[STAGE_FAILED: review]",
     });
 
     // Allow async side effects to fire
@@ -653,7 +666,8 @@ describe("review findings comment posting on agent review failure", () => {
     orchestrator.onWorkerExit({
       issueId: "1",
       outcome: "normal",
-      agentMessage: "Missing null check in handler.ts line 42\n[STAGE_FAILED: review]",
+      agentMessage:
+        "Missing null check in handler.ts line 42\n[STAGE_FAILED: review]",
     });
 
     // Allow async side effects to fire
@@ -683,7 +697,8 @@ describe("review findings comment posting on agent review failure", () => {
     const retryEntry = orchestrator.onWorkerExit({
       issueId: "1",
       outcome: "normal",
-      agentMessage: "Missing null check in handler.ts line 42\n[STAGE_FAILED: review]",
+      agentMessage:
+        "Missing null check in handler.ts line 42\n[STAGE_FAILED: review]",
     });
 
     // Should rework back to implement
@@ -752,20 +767,25 @@ function createStagedOrchestrator(overrides?: {
     reworkCount: number;
   }) => void;
 }) {
-  const stages = overrides?.stages !== undefined
-    ? overrides.stages
-    : createThreeStageConfig();
+  const stages =
+    overrides?.stages !== undefined
+      ? overrides.stages
+      : createThreeStageConfig();
 
-  const tracker = overrides?.trackerFactory?.() ?? createTracker({
-    candidates: overrides?.candidates ?? [
-      createIssue({ id: "1", identifier: "ISSUE-1" }),
-    ],
-  });
+  const tracker =
+    overrides?.trackerFactory?.() ??
+    createTracker({
+      candidates: overrides?.candidates ?? [
+        createIssue({ id: "1", identifier: "ISSUE-1" }),
+      ],
+    });
 
   const options: OrchestratorCoreOptions = {
     config: createConfig({
       stages,
-      ...(overrides?.escalationState !== undefined ? { escalationState: overrides.escalationState } : {}),
+      ...(overrides?.escalationState !== undefined
+        ? { escalationState: overrides.escalationState }
+        : {}),
     }),
     tracker,
     spawnWorker: async (input) => {

@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { CodexClientEvent } from "../../src/codex/app-server-client.js";
 import { ClaudeCodeRunner } from "../../src/runners/claude-code-runner.js";
-import { createRunnerFromConfig, isAiSdkRunner } from "../../src/runners/factory.js";
+import {
+  createRunnerFromConfig,
+  isAiSdkRunner,
+} from "../../src/runners/factory.js";
 import { GeminiRunner } from "../../src/runners/gemini-runner.js";
 import type { RunnerKind } from "../../src/runners/types.js";
 import { RUNNER_KINDS } from "../../src/runners/types.js";

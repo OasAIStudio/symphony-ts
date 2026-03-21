@@ -12,8 +12,8 @@ import {
   type CreateReviewerClient,
   type EnsembleGateResult,
   type PostComment,
-  type ReviewerResult,
   RATE_LIMIT_PATTERNS,
+  type ReviewerResult,
   aggregateVerdicts,
   formatGateComment,
   parseReviewerOutput,
@@ -132,7 +132,8 @@ describe("parseReviewerOutput", () => {
   });
 
   it("returns error verdict when output contains rate-limit text", () => {
-    const raw = "You have exhausted your capacity on this model. Please try again later.";
+    const raw =
+      "You have exhausted your capacity on this model. Please try again later.";
     const result = parseReviewerOutput(reviewer, raw);
     expect(result.verdict.verdict).toBe("error");
     expect(result.verdict.role).toBe("adversarial-reviewer");
@@ -147,7 +148,8 @@ describe("parseReviewerOutput", () => {
   });
 
   it("still returns fail for genuine non-JSON review without rate-limit text", () => {
-    const raw = "This code has serious issues but I cannot format my response as JSON.";
+    const raw =
+      "This code has serious issues but I cannot format my response as JSON.";
     const result = parseReviewerOutput(reviewer, raw);
     expect(result.verdict.verdict).toBe("fail");
     expect(result.feedback).toBe(raw);
@@ -231,7 +233,9 @@ describe("runEnsembleGate", () => {
     expect(clientCalls).toContain("security-reviewer");
     expect(result.aggregate).toBe("pass");
     expect(result.results).toHaveLength(2);
-    expect(result.results.every((r) => r.verdict.verdict === "pass")).toBe(true);
+    expect(result.results.every((r) => r.verdict.verdict === "pass")).toBe(
+      true,
+    );
   });
 
   it("aggregates to fail when one reviewer fails", async () => {
@@ -423,16 +427,18 @@ describe("runEnsembleGate", () => {
     });
 
     // With retries, close is called once per attempt per reviewer
-    expect(closeCalls.filter(c => c === "r1").length).toBeGreaterThanOrEqual(1);
-    expect(closeCalls.filter(c => c === "r2").length).toBeGreaterThanOrEqual(1);
+    expect(closeCalls.filter((c) => c === "r1").length).toBeGreaterThanOrEqual(
+      1,
+    );
+    expect(closeCalls.filter((c) => c === "r2").length).toBeGreaterThanOrEqual(
+      1,
+    );
   });
 });
 
 describe("ensemble gate orchestrator integration", () => {
   it("ensemble gate triggers approve and schedules continuation on pass", async () => {
-    const { OrchestratorCore } = await import(
-      "../../src/orchestrator/core.js"
-    );
+    const { OrchestratorCore } = await import("../../src/orchestrator/core.js");
 
     const gateResults: EnsembleGateResult[] = [];
     const orchestrator = new OrchestratorCore({
@@ -479,9 +485,7 @@ describe("ensemble gate orchestrator integration", () => {
   });
 
   it("ensemble gate triggers rework on fail", async () => {
-    const { OrchestratorCore } = await import(
-      "../../src/orchestrator/core.js"
-    );
+    const { OrchestratorCore } = await import("../../src/orchestrator/core.js");
 
     const orchestrator = new OrchestratorCore({
       config: createConfig({
@@ -515,9 +519,7 @@ describe("ensemble gate orchestrator integration", () => {
   });
 
   it("posts escalation comment when rework max exceeded", async () => {
-    const { OrchestratorCore } = await import(
-      "../../src/orchestrator/core.js"
-    );
+    const { OrchestratorCore } = await import("../../src/orchestrator/core.js");
 
     const postedComments: Array<{ issueId: string; body: string }> = [];
     const orchestrator = new OrchestratorCore({
@@ -574,14 +576,14 @@ describe("ensemble gate orchestrator integration", () => {
     expect(orchestrator.getState().completed.has("1")).toBe(true);
     expect(postedComments).toHaveLength(1);
     expect(postedComments[0]!.issueId).toBe("1");
-    expect(postedComments[0]!.body).toContain("max rework attempts (3) exceeded");
+    expect(postedComments[0]!.body).toContain(
+      "max rework attempts (3) exceeded",
+    );
     expect(postedComments[0]!.body).toContain("Escalating for manual review");
   });
 
   it("human gate leaves issue in gate state without running handler", async () => {
-    const { OrchestratorCore } = await import(
-      "../../src/orchestrator/core.js"
-    );
+    const { OrchestratorCore } = await import("../../src/orchestrator/core.js");
 
     const gateHandlerCalled = vi.fn();
     const orchestrator = new OrchestratorCore({
@@ -915,12 +917,19 @@ function createTracker() {
       return [];
     },
     async fetchIssueStatesByIds() {
-      return [{ id: issue.id, identifier: issue.identifier, state: issue.state }];
+      return [
+        { id: issue.id, identifier: issue.identifier, state: issue.state },
+      ];
     },
   };
 }
 
-function createConfig(overrides?: { stages?: ReturnType<typeof createEnsembleWorkflowConfig> | ReturnType<typeof createHumanGateWorkflowConfig> | null }) {
+function createConfig(overrides?: {
+  stages?:
+    | ReturnType<typeof createEnsembleWorkflowConfig>
+    | ReturnType<typeof createHumanGateWorkflowConfig>
+    | null;
+}) {
   return {
     workflowPath: "/tmp/WORKFLOW.md",
     promptTemplate: "Prompt",

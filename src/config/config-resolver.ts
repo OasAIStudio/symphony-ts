@@ -35,8 +35,8 @@ import type {
   ReviewerDefinition,
   StageDefinition,
   StageTransitions,
-  StagesConfig,
   StageType,
+  StagesConfig,
 } from "./types.js";
 import { GATE_TYPES, STAGE_TYPES } from "./types.js";
 
@@ -364,9 +364,7 @@ function resolvePathValue(
   return normalize(expanded);
 }
 
-export function resolveStagesConfig(
-  value: unknown,
-): StagesConfig | null {
+export function resolveStagesConfig(value: unknown): StagesConfig | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
@@ -415,8 +413,8 @@ export function resolveStagesConfig(
     return null;
   }
 
-  const initialStage =
-    readString(raw.initial_stage) ?? firstStageName!;
+  // biome-ignore lint/style/noNonNullAssertion: firstStageName guaranteed non-null when stageEntries is non-empty
+  const initialStage = readString(raw.initial_stage) ?? firstStageName!;
 
   return Object.freeze({
     initialStage,
@@ -492,13 +490,16 @@ export function validateStagesConfig(
   }
 
   if (!hasTerminal) {
-    errors.push("No terminal stage defined. At least one stage must have type 'terminal'.");
+    errors.push(
+      "No terminal stage defined. At least one stage must have type 'terminal'.",
+    );
   }
 
   // Check reachability from initial stage
   const reachable = new Set<string>();
   const queue = [stagesConfig.initialStage];
   while (queue.length > 0) {
+    // biome-ignore lint/style/noNonNullAssertion: queue.length > 0 guarantees pop() returns a value
     const current = queue.pop()!;
     if (reachable.has(current)) {
       continue;
@@ -523,7 +524,9 @@ export function validateStagesConfig(
 
   for (const name of stageNames) {
     if (!reachable.has(name)) {
-      errors.push(`Stage '${name}' is unreachable from initial stage '${stagesConfig.initialStage}'.`);
+      errors.push(
+        `Stage '${name}' is unreachable from initial stage '${stagesConfig.initialStage}'.`,
+      );
     }
   }
 

@@ -182,9 +182,7 @@ const COMMENT_UPDATE_MUTATION = `
   }
 `;
 
-function normalizeInput(
-  input: unknown,
-):
+function normalizeInput(input: unknown):
   | (WorkpadSyncToolResult & { success: false })
   | {
       success: true;
@@ -198,22 +196,21 @@ function normalizeInput(
     );
   }
 
-  const issueId =
-    "issue_id" in input ? input.issue_id : undefined;
+  const issueId = "issue_id" in input ? input.issue_id : undefined;
   if (typeof issueId !== "string" || issueId.trim().length === 0) {
     return invalidInput("sync_workpad.issue_id must be a non-empty string.");
   }
 
-  const filePath =
-    "file_path" in input ? input.file_path : undefined;
+  const filePath = "file_path" in input ? input.file_path : undefined;
   if (typeof filePath !== "string" || filePath.trim().length === 0) {
     return invalidInput("sync_workpad.file_path must be a non-empty string.");
   }
 
-  const commentId =
-    "comment_id" in input ? input.comment_id : undefined;
+  const commentId = "comment_id" in input ? input.comment_id : undefined;
   if (commentId !== undefined && typeof commentId !== "string") {
-    return invalidInput("sync_workpad.comment_id must be a string if provided.");
+    return invalidInput(
+      "sync_workpad.comment_id must be a string if provided.",
+    );
   }
 
   return {
@@ -257,17 +254,13 @@ async function executeGraphql(
   });
 
   if (!response.ok) {
-    throw new Error(
-      `Linear API returned HTTP ${response.status}.`,
-    );
+    throw new Error(`Linear API returned HTTP ${response.status}.`);
   }
 
   const body = (await response.json()) as JsonObject;
   const errors = body.errors;
   if (Array.isArray(errors) && errors.length > 0) {
-    throw new Error(
-      `Linear GraphQL errors: ${JSON.stringify(errors)}`,
-    );
+    throw new Error(`Linear GraphQL errors: ${JSON.stringify(errors)}`);
   }
 
   const data = body.data;
