@@ -2200,6 +2200,72 @@ describe("execution report on terminal state", () => {
     // No side effects
     expect(orchestrator.getState().issueStages["1"]).toBeUndefined();
   });
+
+  it("execution history cleaned up after completion", async () => {
+    const postedComments: Array<{ issueId: string; body: string }> = [];
+    const config = createTerminalStageConfig();
+    const orchestrator = new OrchestratorCore({
+      config,
+      tracker: createTracker({
+        candidates: [createIssue({ id: "1", identifier: "ISSUE-1" })],
+        statesById: [{ id: "1", identifier: "ISSUE-1", state: "In Progress" }],
+      }),
+      spawnWorker: async () => ({
+        workerHandle: { pid: 1001 },
+        monitorHandle: { ref: "monitor-1" },
+      }),
+      postComment: async (issueId, body) => {
+        postedComments.push({ issueId, body });
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    await orchestrator.pollTick();
+    // Pre-populate execution history with 4 stages
+    orchestrator.getState().issueExecutionHistory["1"] = [
+      {
+        stageName: "investigate",
+        durationMs: 18_000,
+        totalTokens: 50_000,
+        turns: 5,
+        outcome: "normal",
+      },
+      {
+        stageName: "implement",
+        durationMs: 120_000,
+        totalTokens: 200_000,
+        turns: 10,
+        outcome: "normal",
+      },
+      {
+        stageName: "review",
+        durationMs: 45_000,
+        totalTokens: 80_000,
+        turns: 3,
+        outcome: "normal",
+      },
+    ];
+    orchestrator.getState().issueStages["1"] = "merge";
+
+    orchestrator.onWorkerExit({
+      issueId: "1",
+      outcome: "normal",
+      endedAt: new Date("2026-03-06T00:01:05.000Z"),
+    });
+
+    // Allow microtasks (void promise) to flush
+    await Promise.resolve();
+
+    // Execution history must be deleted from orchestrator state after Done
+    expect(orchestrator.getState().issueExecutionHistory["1"]).toBeUndefined();
+    // Stages and rework counts also cleaned up
+    expect(orchestrator.getState().issueStages["1"]).toBeUndefined();
+    expect(orchestrator.getState().issueReworkCounts["1"]).toBeUndefined();
+    // Issue is marked completed
+    expect(orchestrator.getState().completed.has("1")).toBe(true);
+    // Report was still posted before cleanup
+    expect(postedComments).toHaveLength(1);
+  });
 });
 
 describe("review findings comment on agent review failure", () => {
