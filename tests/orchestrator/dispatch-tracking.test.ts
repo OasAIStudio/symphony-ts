@@ -6,6 +6,7 @@ import type {
 } from "../../src/config/types.js";
 import type { Issue } from "../../src/domain/model.js";
 import { createInitialOrchestratorState } from "../../src/domain/model.js";
+import { formatEasternTimestamp } from "../../src/logging/format-timestamp.js";
 import {
   OrchestratorCore,
   type OrchestratorCoreOptions,
@@ -30,7 +31,7 @@ describe("issueFirstDispatchedAt tracking", () => {
     await orchestrator.pollTick();
 
     expect(orchestrator.getState().issueFirstDispatchedAt["1"]).toBe(
-      dispatchTime.toISOString(),
+      formatEasternTimestamp(dispatchTime),
     );
   });
 
@@ -47,7 +48,7 @@ describe("issueFirstDispatchedAt tracking", () => {
     // First dispatch at T1
     await orchestrator.pollTick();
     expect(orchestrator.getState().issueFirstDispatchedAt["1"]).toBe(
-      t1.toISOString(),
+      formatEasternTimestamp(t1),
     );
 
     // Worker exits, stage advances to "implement"
@@ -60,7 +61,7 @@ describe("issueFirstDispatchedAt tracking", () => {
 
     // issueFirstDispatchedAt must still be T1, not T2
     expect(orchestrator.getState().issueFirstDispatchedAt["1"]).toBe(
-      t1.toISOString(),
+      formatEasternTimestamp(t1),
     );
   });
 

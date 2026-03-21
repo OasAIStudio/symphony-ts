@@ -5,6 +5,7 @@ import {
   createEmptyLiveSession,
   createInitialOrchestratorState,
 } from "../../src/domain/model.js";
+import { formatEasternTimestamp } from "../../src/logging/format-timestamp.js";
 import { buildRuntimeSnapshot } from "../../src/logging/runtime-snapshot.js";
 
 describe("runtime snapshot", () => {
@@ -209,7 +210,9 @@ describe("runtime snapshot", () => {
       now: new Date("2026-03-06T10:00:10.000Z"),
     });
 
-    expect(snapshot.generated_at).toBe("2026-03-06T10:00:10.000Z");
+    expect(snapshot.generated_at).toBe(
+      formatEasternTimestamp(new Date("2026-03-06T10:00:10.000Z")),
+    );
     expect(snapshot.counts).toEqual({
       running: 2,
       retrying: 1,
@@ -239,7 +242,7 @@ describe("runtime snapshot", () => {
         issue_id: "issue-3",
         issue_identifier: "MMM-3",
         attempt: 2,
-        due_at: "2026-03-06T10:00:20.000Z",
+        due_at: formatEasternTimestamp(new Date("2026-03-06T10:00:20.000Z")),
         error: "no available orchestrator slots",
       },
     ]);

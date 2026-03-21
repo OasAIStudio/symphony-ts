@@ -8,6 +8,7 @@ import { resolveWorkflowConfig } from "../config/config-resolver.js";
 import { WORKFLOW_FILENAME } from "../config/defaults.js";
 import { loadWorkflowDefinition } from "../config/workflow-loader.js";
 import { ERROR_CODES } from "../errors/codes.js";
+import { formatEasternTimestamp } from "../logging/format-timestamp.js";
 import {
   type RuntimeServiceHandle,
   startRuntimeService,
@@ -227,7 +228,7 @@ function safeErrorMessage(error: unknown): string {
 
 export function handleUncaughtException(error: unknown): void {
   const entry = {
-    timestamp: new Date().toISOString(),
+    timestamp: formatEasternTimestamp(new Date()),
     level: "error",
     event: "process_crash",
     message: safeErrorMessage(error),
@@ -245,7 +246,7 @@ export function handleUncaughtException(error: unknown): void {
 
 export function handleUnhandledRejection(reason: unknown): void {
   const entry = {
-    timestamp: new Date().toISOString(),
+    timestamp: formatEasternTimestamp(new Date()),
     level: "error",
     event: "process_crash",
     message: safeErrorMessage(reason),

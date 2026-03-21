@@ -1,5 +1,6 @@
 import { type FSWatcher, watch } from "node:fs";
 
+import { formatEasternTimestamp } from "../logging/format-timestamp.js";
 import {
   resolveWorkflowConfig,
   validateDispatchConfig,
@@ -46,7 +47,7 @@ export async function loadWorkflowSnapshot(
     definition,
     config,
     dispatchValidation: validateDispatchConfig(config),
-    loadedAt: new Date().toISOString(),
+    loadedAt: formatEasternTimestamp(new Date()),
   };
 }
 

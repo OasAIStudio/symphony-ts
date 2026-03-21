@@ -22,6 +22,7 @@ import {
   normalizeIssueState,
   parseFailureSignal,
 } from "../domain/model.js";
+import { formatEasternTimestamp } from "../logging/format-timestamp.js";
 import { applyCodexEventToSession } from "../logging/session-metrics.js";
 import { createRunnerFromConfig, isAiSdkRunner } from "../runners/factory.js";
 import type { RunnerKind } from "../runners/types.js";
@@ -182,7 +183,7 @@ export class AgentRunner {
       issueIdentifier: issue.identifier,
       attempt: input.attempt,
       workspacePath: "",
-      startedAt: new Date().toISOString(),
+      startedAt: formatEasternTimestamp(new Date()),
       status: "preparing_workspace",
     };
     const abortController = createAgentAbortController(input.signal);
@@ -311,7 +312,7 @@ export class AgentRunner {
               : lastTurn.status === "failed"
                 ? "turn_failed"
                 : "turn_cancelled",
-          timestamp: new Date().toISOString(),
+          timestamp: formatEasternTimestamp(new Date()),
           codexAppServerPid: liveSession.codexAppServerPid,
           sessionId: lastTurn.sessionId,
           threadId: lastTurn.threadId,

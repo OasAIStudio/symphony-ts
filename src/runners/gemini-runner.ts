@@ -5,6 +5,7 @@ import type {
   CodexClientEvent,
   CodexTurnResult,
 } from "../codex/app-server-client.js";
+import { formatEasternTimestamp } from "../logging/format-timestamp.js";
 
 export interface GeminiRunnerOptions {
   cwd: string;
@@ -126,7 +127,7 @@ export class GeminiRunner implements AgentRunnerCodexClient {
   ): void {
     this.options.onEvent?.({
       ...input,
-      timestamp: new Date().toISOString(),
+      timestamp: formatEasternTimestamp(new Date()),
       codexAppServerPid: null,
     });
   }

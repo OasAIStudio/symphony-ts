@@ -5,6 +5,7 @@ import type {
   StageRecord,
   TurnHistoryEntry,
 } from "../domain/model.js";
+import { formatEasternTimestamp } from "./format-timestamp.js";
 import { getAggregateSecondsRunning } from "./session-metrics.js";
 
 export type HealthStatus = "green" | "yellow" | "red";
@@ -142,12 +143,12 @@ export function buildRuntimeSnapshot(
       issue_id: entry.issueId,
       issue_identifier: entry.identifier,
       attempt: entry.attempt,
-      due_at: new Date(entry.dueAtMs).toISOString(),
+      due_at: formatEasternTimestamp(new Date(entry.dueAtMs)),
       error: entry.error,
     }));
 
   return {
-    generated_at: now.toISOString(),
+    generated_at: formatEasternTimestamp(now),
     counts: {
       running: running.length,
       retrying: retrying.length,

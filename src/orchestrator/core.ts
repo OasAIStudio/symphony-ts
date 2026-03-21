@@ -17,6 +17,7 @@ import {
   normalizeIssueState,
   parseFailureSignal,
 } from "../domain/model.js";
+import { formatEasternTimestamp } from "../logging/format-timestamp.js";
 import {
   addEndedSessionRuntime,
   applyCodexEventToOrchestratorState,
@@ -1214,7 +1215,9 @@ export class OrchestratorCore {
     }
 
     if (!this.state.issueFirstDispatchedAt[issue.id]) {
-      this.state.issueFirstDispatchedAt[issue.id] = this.now().toISOString();
+      this.state.issueFirstDispatchedAt[issue.id] = formatEasternTimestamp(
+        this.now(),
+      );
     }
 
     try {
@@ -1231,7 +1234,7 @@ export class OrchestratorCore {
         issue,
         identifier: issue.identifier,
         retryAttempt: normalizeRetryAttempt(attempt),
-        startedAt: this.now().toISOString(),
+        startedAt: formatEasternTimestamp(this.now()),
         workerHandle: spawned.workerHandle,
         monitorHandle: spawned.monitorHandle,
       };

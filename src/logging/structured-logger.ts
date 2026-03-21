@@ -1,6 +1,7 @@
 import type { Writable } from "node:stream";
 
 import type { LogField } from "./fields.js";
+import { formatEasternTimestamp } from "./format-timestamp.js";
 
 export type StructuredLogLevel = "debug" | "info" | "warn" | "error";
 
@@ -152,7 +153,7 @@ export function createStructuredLogEntry(
   now = new Date(),
 ): StructuredLogEntry {
   const merged: StructuredLogEntry = {
-    timestamp: now.toISOString(),
+    timestamp: formatEasternTimestamp(now),
     level: base.level,
     event: base.event,
     message: formatStructuredMessage(base.event, base.message, context),

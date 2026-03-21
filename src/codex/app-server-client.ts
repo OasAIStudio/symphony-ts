@@ -1,6 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 
 import { ERROR_CODES } from "../errors/codes.js";
+import { formatEasternTimestamp } from "../logging/format-timestamp.js";
 
 const DEFAULT_CLIENT_INFO = Object.freeze({
   name: "symphony-ts",
@@ -788,7 +789,7 @@ export class CodexAppServerClient {
   ): void {
     this.options.onEvent?.({
       ...input,
-      timestamp: new Date().toISOString(),
+      timestamp: formatEasternTimestamp(new Date()),
       codexAppServerPid:
         this.child?.pid === undefined ? null : String(this.child.pid),
     });

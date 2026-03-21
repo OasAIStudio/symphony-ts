@@ -9,6 +9,7 @@ import type {
   CodexTurnResult,
   CodexUsage,
 } from "../codex/app-server-client.js";
+import { formatEasternTimestamp } from "../logging/format-timestamp.js";
 
 // ai-sdk-provider-claude-code uses short model names, not full Anthropic IDs.
 // Map standard names to provider-expected short names.
@@ -207,7 +208,7 @@ export class ClaudeCodeRunner implements AgentRunnerCodexClient {
   ): void {
     this.options.onEvent?.({
       ...input,
-      timestamp: new Date().toISOString(),
+      timestamp: formatEasternTimestamp(new Date()),
       codexAppServerPid: null,
     });
   }
