@@ -1,46 +1,33 @@
 ## Workpad
-**Environment**: pro14:/Users/ericlitman/intent/workspaces/architecture-build/repo/symphony-ts@2ad9b61
+**Environment**: pro14:/Users/ericlitman/intent/workspaces/architecture-build/repo/symphony-ts@73532bb
 
 ### Plan
 
-- [ ] Add `formatReviewFindingsComment(issueIdentifier: string, stageName: string, agentMessage: string): string` to `src/orchestrator/gate-handler.ts`
-  - Export alongside existing `formatGateComment`
-  - Returns markdown: `## Review Findings\n\n**Issue:** {issueIdentifier}\n**Stage:** {stageName}\n**Failure class:** review\n\n{agentMessage}`
-- [ ] Update `src/orchestrator/core.ts`:
-  - Import `formatReviewFindingsComment` from `./gate-handler.js`
-  - Update `postReviewFindingsComment` to use `formatReviewFindingsComment(issueIdentifier, stageName, agentMessage)` instead of inline string construction
-  - Thread `issueIdentifier` (from `runningEntry.identifier`) and `stageName` (current stage name) through call sites
-- [ ] Add 5 missing test cases to `tests/orchestrator/core.test.ts`:
-  - `"review findings comment failure does not block rework"` — postComment throws, rework still proceeds
-  - `"postComment error is swallowed for review findings"` — no error propagated to caller
-  - `"skips review findings when postComment not configured"` — no postComment configured, rework proceeds silently
-  - `"escalation fires on max rework exceeded"` — maxRework hit → escalation comment+state fires
-  - `"no review findings on escalation"` — when escalated, review findings comment NOT posted
-- [ ] Optionally add unit tests for `formatReviewFindingsComment` to `tests/orchestrator/gate-handler.test.ts`
+- [x] Add `analyze` subcommand to `ops/symphony-ctl`
+  - [x] Accept optional JSONL path (default: most recent `/tmp/symphony-logs-*/symphony.jsonl`)
+  - [x] Parse `stage_completed` events for per-issue/per-stage summaries
+  - [x] Parse `turn_completed` events for per-turn granularity
+  - [x] Output formatted text report: run summary, per-issue table, per-stage averages, cache efficiency, outliers
+  - [x] Support `--json` flag for machine-readable output
+  - [x] Handle missing fields gracefully (older logs)
+  - [x] Use only standard unix tools (jq, awk, sort) — no extra dependencies
 
 ### Acceptance Criteria
 
-- [ ] `formatReviewFindingsComment` exported from `gate-handler.ts`, follows `formatGateComment` markdown style
-- [ ] `postReviewFindingsComment` in `core.ts` uses `formatReviewFindingsComment` (no inline body construction)
-- [ ] `void ... .catch()` pattern used for best-effort posting
-- [ ] Review findings posted ONLY when rework proceeds (not on escalation)
-- [ ] All 5 new test cases pass with exact names from spec
-- [ ] All 362 existing tests continue to pass
+- [x] `symphony-ctl analyze <path>` prints a formatted text report
+- [x] `symphony-ctl analyze --json <path>` outputs machine-readable JSON
+- [x] Default path uses most recent `/tmp/symphony-logs-*/symphony.jsonl`
+- [x] Missing fields produce zero/unknown gracefully
+- [x] No new npm dependencies added
+- [x] Full test suite: 435 passed, 3 skipped, 0 failed
 
 ### Validation
-- `npm test -- --grep "posts review findings comment on agent review failure"`
-- `npm test -- --grep "review findings comment includes agent message"`
-- `npm test -- --grep "review failure triggers rework after posting comment"`
-- `npm test -- --grep "review findings comment failure does not block rework"`
-- `npm test -- --grep "postComment error is swallowed for review findings"`
-- `npm test -- --grep "skips review findings when postComment not configured"`
-- `npm test -- --grep "escalation fires on max rework exceeded"`
-- `npm test -- --grep "no review findings on escalation"`
-- `npm test` (full suite — all 362+ tests pass)
+- Bash syntax check passed: `bash -n ops/symphony-ctl`
+- Text output verified with 4-stage test log including outliers
+- Empty/missing-field logs handled gracefully
+- Default path detection picks most recently modified log
+- TypeScript: `npx tsc --noEmit` → exit 0
+- Tests: `pnpm test` → 435 passed, 3 skipped, 0 failed
 
 ### Notes
-- 2026-03-21 SYMPH-13 investigation complete. Plan posted.
-- Current state: `postReviewFindingsComment` exists in core.ts (lines 696–714) — constructs body inline. Three of eight spec tests already pass. `formatReviewFindingsComment` NOT yet in gate-handler.ts — primary gap.
-- `issueExecutionHistory` cleanup already present in all escalation/terminal paths (from SYMPH-12) — no changes needed there.
-- The "before calling reworkGate()" phrasing reconciles with "no review findings on escalation" by calling `reworkGate` first, posting findings only when NOT escalated — current behavior is correct.
-- No new dependencies needed.
+- 2026-03-21 SYMPH-28 implementation complete. PR opened.
