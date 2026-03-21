@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { realpathSync } from "node:fs";
+import { realpathSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -216,6 +216,51 @@ export async function runCli(
   }
 }
 
+function safeErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  try {
+    return String(error);
+  } catch {
+    return "[non-stringifiable value]";
+  }
+}
+
+export function handleUncaughtException(error: unknown): void {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    level: "error",
+    event: "process_crash",
+    message: safeErrorMessage(error),
+    error_code: "uncaught_exception",
+    stack: error instanceof Error ? error.stack : undefined,
+  };
+  process.exitCode = 70;
+  try {
+    writeSync(2, `${JSON.stringify(entry)}\n`);
+  } catch {
+    // Ignore write errors during crash — exiting is the priority.
+  }
+  process.exit(70);
+}
+
+export function handleUnhandledRejection(reason: unknown): void {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    level: "error",
+    event: "process_crash",
+    message: safeErrorMessage(reason),
+    error_code: "unhandled_rejection",
+    stack: reason instanceof Error ? reason.stack : undefined,
+  };
+  process.exitCode = 70;
+  try {
+    writeSync(2, `${JSON.stringify(entry)}\n`);
+  } catch {
+    // Ignore write errors during crash — exiting is the priority.
+  }
+  process.exit(70);
+}
+
 export async function main(): Promise<void> {
   const exitCode = await runCli(process.argv.slice(2));
   process.exitCode = exitCode;
@@ -287,5 +332,7 @@ function renderUsage(): string {
 }
 
 if (shouldRunAsCli(import.meta.url, process.argv[1])) {
-  void main();
+  process.on("uncaughtException", handleUncaughtException);
+  process.on("unhandledRejection", handleUnhandledRejection);
+  void main().catch(handleUnhandledRejection);
 }
