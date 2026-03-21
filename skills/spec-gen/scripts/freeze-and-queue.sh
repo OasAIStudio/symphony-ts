@@ -612,33 +612,62 @@ echo "Todo state: ${TODO_STATE_NAME:-<default>} (ID: ${TODO_STATE_ID:-<default>}
 
 # Write spec content to temp file for stdin piping (avoids arg length limits)
 SPEC_TMPFILE=$(mktemp)
-trap 'rm -f "$SPEC_TMPFILE"' EXIT
+GQL_TMPFILE=""
+trap 'rm -f "$SPEC_TMPFILE" ${GQL_TMPFILE:+"$GQL_TMPFILE"}' EXIT
 echo "$SPEC_CONTENT" > "$SPEC_TMPFILE"
 
 if [[ -n "$UPDATE_ISSUE_ID" ]]; then
   echo ""
   echo "Updating existing parent issue: $UPDATE_ISSUE_ID"
 
-  # Build update command
-  update_args=("$UPDATE_ISSUE_ID" -T "[Spec] $SPEC_TITLE" -o json --quiet --compact)
-  if [[ -n "$DRAFT_STATE_NAME" ]]; then
-    update_args+=(-s "$DRAFT_STATE_NAME")
+  # Build issueUpdate mutation via temp file (title/description are user-provided strings)
+  GQL_TMPFILE=$(mktemp)
+  if [[ -n "$DRAFT_STATE_ID" ]]; then
+    cat > "$GQL_TMPFILE" <<'GQLEOF'
+mutation($issueId: String!, $title: String!, $description: String!, $stateId: String!) {
+  issueUpdate(id: $issueId, input: {
+    title: $title
+    description: $description
+    stateId: $stateId
+  }) {
+    success
+    issue { id identifier url }
+  }
+}
+GQLEOF
+    result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "issueId=$UPDATE_ISSUE_ID" \
+      -v "title=[Spec] $SPEC_TITLE" \
+      -v "description=$(cat "$SPEC_TMPFILE")" \
+      -v "stateId=$DRAFT_STATE_ID" \
+      - < "$GQL_TMPFILE" 2>&1)
+  else
+    cat > "$GQL_TMPFILE" <<'GQLEOF'
+mutation($issueId: String!, $title: String!, $description: String!) {
+  issueUpdate(id: $issueId, input: {
+    title: $title
+    description: $description
+  }) {
+    success
+    issue { id identifier url }
+  }
+}
+GQLEOF
+    result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "issueId=$UPDATE_ISSUE_ID" \
+      -v "title=[Spec] $SPEC_TITLE" \
+      -v "description=$(cat "$SPEC_TMPFILE")" \
+      - < "$GQL_TMPFILE" 2>&1)
   fi
+  rm -f "$GQL_TMPFILE"; GQL_TMPFILE=""
 
-  # Pipe description from temp file
-  result=$($LINEAR_CLI issues update "${update_args[@]}" -d "$(cat "$SPEC_TMPFILE")" 2>&1)
-  parent_identifier=$(echo "$result" | jq -r '.identifier // empty')
-  parent_url=$(echo "$result" | jq -r '.url // empty')
-  PARENT_ID=$(echo "$result" | jq -r '.id // empty')
+  success=$(echo "$result" | jq -r '.data.issueUpdate.success // false')
+  PARENT_ID=$(echo "$result" | jq -r '.data.issueUpdate.issue.id // empty')
+  parent_identifier=$(echo "$result" | jq -r '.data.issueUpdate.issue.identifier // empty')
+  parent_url=$(echo "$result" | jq -r '.data.issueUpdate.issue.url // empty')
   PARENT_IDENTIFIER="$parent_identifier"
 
-  if [[ -n "$parent_identifier" ]]; then
-    # issues update may not return url or id — fetch them if missing
-    if [[ -z "$parent_url" || -z "$PARENT_ID" ]]; then
-      get_result=$($LINEAR_CLI issues get "$parent_identifier" -o json --quiet --compact 2>&1)
-      [[ -z "$parent_url" ]] && parent_url=$(echo "$get_result" | jq -r '.url // empty')
-      [[ -z "$PARENT_ID" ]] && PARENT_ID=$(echo "$get_result" | jq -r '.id // empty')
-    fi
+  if [[ "$success" == "true" && -n "$parent_identifier" ]]; then
     echo "  Updated: $parent_identifier ($parent_url)"
   else
     echo "  FAILED to update parent issue" >&2
@@ -649,26 +678,62 @@ else
   echo ""
   echo "Creating parent issue..."
 
-  # Build create command
-  create_args=("[Spec] $SPEC_TITLE" -t "$TEAM_KEY" -o json --quiet --compact)
-  if [[ -n "$DRAFT_STATE_NAME" ]]; then
-    create_args+=(-s "$DRAFT_STATE_NAME")
+  # Spec parent: issueCreate mutation via temp file (title/description are user-provided strings)
+  # Includes projectId at creation time (eliminates separate issues update --project call)
+  GQL_TMPFILE=$(mktemp)
+  if [[ -n "$DRAFT_STATE_ID" ]]; then
+    cat > "$GQL_TMPFILE" <<'GQLEOF'
+mutation($title: String!, $description: String!, $teamId: String!, $projectId: String!, $stateId: String!) {
+  issueCreate(input: {
+    title: $title
+    description: $description
+    teamId: $teamId
+    projectId: $projectId
+    stateId: $stateId
+  }) {
+    success
+    issue { id identifier url }
+  }
+}
+GQLEOF
+    result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "title=[Spec] $SPEC_TITLE" \
+      -v "description=$(cat "$SPEC_TMPFILE")" \
+      -v "teamId=$TEAM_ID" \
+      -v "projectId=$PROJECT_ID" \
+      -v "stateId=$DRAFT_STATE_ID" \
+      - < "$GQL_TMPFILE" 2>&1)
+  else
+    cat > "$GQL_TMPFILE" <<'GQLEOF'
+mutation($title: String!, $description: String!, $teamId: String!, $projectId: String!) {
+  issueCreate(input: {
+    title: $title
+    description: $description
+    teamId: $teamId
+    projectId: $projectId
+  }) {
+    success
+    issue { id identifier url }
+  }
+}
+GQLEOF
+    result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "title=[Spec] $SPEC_TITLE" \
+      -v "description=$(cat "$SPEC_TMPFILE")" \
+      -v "teamId=$TEAM_ID" \
+      -v "projectId=$PROJECT_ID" \
+      - < "$GQL_TMPFILE" 2>&1)
   fi
+  rm -f "$GQL_TMPFILE"; GQL_TMPFILE=""
 
-  # Pipe description from temp file
-  result=$($LINEAR_CLI issues create "${create_args[@]}" -d "$(cat "$SPEC_TMPFILE")" 2>&1)
-  parent_identifier=$(echo "$result" | jq -r '.identifier // empty')
-  parent_url=$(echo "$result" | jq -r '.url // empty')
-  PARENT_ID=$(echo "$result" | jq -r '.id // empty')
+  success=$(echo "$result" | jq -r '.data.issueCreate.success // false')
+  PARENT_ID=$(echo "$result" | jq -r '.data.issueCreate.issue.id // empty')
+  parent_identifier=$(echo "$result" | jq -r '.data.issueCreate.issue.identifier // empty')
+  parent_url=$(echo "$result" | jq -r '.data.issueCreate.issue.url // empty')
   PARENT_IDENTIFIER="$parent_identifier"
 
-  if [[ -n "$parent_identifier" && -n "$PARENT_ID" ]]; then
+  if [[ "$success" == "true" && -n "$parent_identifier" && -n "$PARENT_ID" ]]; then
     echo "  Created parent: $parent_identifier ($parent_url)"
-
-    # Assign to project (issues create doesn't have a --project flag)
-    $LINEAR_CLI issues update "$parent_identifier" --project "$PROJECT_ID" \
-      -o json --quiet --compact > /dev/null 2>&1 || \
-      echo "  WARNING: Failed to assign parent to project" >&2
   else
     echo "  FAILED to create parent issue" >&2
     echo "  Response: $result" >&2
@@ -701,33 +766,73 @@ for ((i=0; i<TOTAL; i++)); do
   pri_num=$(echo "${TASK_BODIES[$i]}" | grep -oE '\*\*Priority\*\*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | head -1)
   linear_priority=${pri_num:-3}
 
-  # Build create command
-  sub_args=("$title" -t "$TEAM_KEY" -p "$linear_priority" -o json --quiet --compact)
-  if [[ -n "$TODO_STATE_NAME" ]]; then
-    sub_args+=(-s "$TODO_STATE_NAME")
-  fi
-
   # Write sub-issue body to temp file for description
   echo "$sub_body" > "$SPEC_TMPFILE"
-  result=$($LINEAR_CLI issues create "${sub_args[@]}" -d "$(cat "$SPEC_TMPFILE")" 2>&1)
-  sub_identifier=$(echo "$result" | jq -r '.identifier // empty')
-  sub_url=$(echo "$result" | jq -r '.url // empty')
-  sub_id=$(echo "$result" | jq -r '.id // empty')
 
-  if [[ -n "$sub_identifier" && -n "$sub_id" ]]; then
+  # Build sub-issue issueCreate mutation via temp file (title/description are user-provided strings)
+  # Includes both projectId and parentId at creation time — no separate API calls needed.
+  # Priority is inlined as integer literal to avoid Int/String type coercion issues with -v flag.
+  GQL_TMPFILE=$(mktemp)
+  if [[ -n "$TODO_STATE_ID" ]]; then
+    cat > "$GQL_TMPFILE" <<GQLEOF
+mutation(\$title: String!, \$description: String!, \$teamId: String!, \$projectId: String!, \$parentId: String!, \$stateId: String!) {
+  issueCreate(input: {
+    title: \$title
+    description: \$description
+    teamId: \$teamId
+    projectId: \$projectId
+    parentId: \$parentId
+    stateId: \$stateId
+    priority: ${linear_priority}
+  }) {
+    success
+    issue { id identifier url }
+  }
+}
+GQLEOF
+    result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "title=$title" \
+      -v "description=$(cat "$SPEC_TMPFILE")" \
+      -v "teamId=$TEAM_ID" \
+      -v "projectId=$PROJECT_ID" \
+      -v "parentId=$PARENT_ID" \
+      -v "stateId=$TODO_STATE_ID" \
+      - < "$GQL_TMPFILE" 2>&1)
+  else
+    cat > "$GQL_TMPFILE" <<GQLEOF
+mutation(\$title: String!, \$description: String!, \$teamId: String!, \$projectId: String!, \$parentId: String!) {
+  issueCreate(input: {
+    title: \$title
+    description: \$description
+    teamId: \$teamId
+    projectId: \$projectId
+    parentId: \$parentId
+    priority: ${linear_priority}
+  }) {
+    success
+    issue { id identifier url }
+  }
+}
+GQLEOF
+    result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "title=$title" \
+      -v "description=$(cat "$SPEC_TMPFILE")" \
+      -v "teamId=$TEAM_ID" \
+      -v "projectId=$PROJECT_ID" \
+      -v "parentId=$PARENT_ID" \
+      - < "$GQL_TMPFILE" 2>&1)
+  fi
+  rm -f "$GQL_TMPFILE"; GQL_TMPFILE=""
+
+  success=$(echo "$result" | jq -r '.data.issueCreate.success // false')
+  sub_identifier=$(echo "$result" | jq -r '.data.issueCreate.issue.identifier // empty')
+  sub_url=$(echo "$result" | jq -r '.data.issueCreate.issue.url // empty')
+  sub_id=$(echo "$result" | jq -r '.data.issueCreate.issue.id // empty')
+
+  if [[ "$success" == "true" && -n "$sub_identifier" && -n "$sub_id" ]]; then
     echo "  Created: $sub_identifier — $title ($sub_url)"
     SUB_ISSUE_IDS[$i]="$sub_id"
     SUB_ISSUE_IDENTIFIERS[$i]="$sub_identifier"
-
-    # Set parent relationship
-    $LINEAR_CLI relations parent "$sub_identifier" "$PARENT_IDENTIFIER" \
-      --quiet > /dev/null 2>&1 || \
-      echo "  WARNING: Failed to set parent on $sub_identifier" >&2
-
-    # Assign to project
-    $LINEAR_CLI issues update "$sub_identifier" --project "$PROJECT_ID" \
-      -o json --quiet --compact > /dev/null 2>&1 || \
-      echo "  WARNING: Failed to assign $sub_identifier to project" >&2
   else
     echo "  FAILED: $title" >&2
     echo "  Response: $result" >&2
@@ -824,7 +929,13 @@ done
 # Only reached when PARENT_ONLY=false (--parent-only exits at line 555)
 
 echo ""
-$LINEAR_CLI issues update "$PARENT_IDENTIFIER" -s "Backlog" --quiet > /dev/null 2>&1
+# Transition parent to Backlog via issueUpdate GraphQL mutation using stateId
+GQL_TMPFILE=$(mktemp)
+cat > "$GQL_TMPFILE" <<GQLEOF
+mutation { issueUpdate(id: "${PARENT_ID}", input: { stateId: "${BACKLOG_STATE_ID}" }) { success issue { id } } }
+GQLEOF
+$LINEAR_CLI api query -o json --quiet --compact - < "$GQL_TMPFILE" > /dev/null 2>&1 || true
+rm -f "$GQL_TMPFILE"; GQL_TMPFILE=""
 echo "Parent $PARENT_IDENTIFIER transitioned to Backlog"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
