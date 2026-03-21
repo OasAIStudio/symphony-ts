@@ -104,27 +104,60 @@ if [[ "$TRIVIAL" == true ]]; then
     TODO_STATE_NAME="Backlog"
   fi
 
-  # Create issue
-  create_args=("$TRIVIAL_TITLE" -t "$TEAM_KEY" -s "$TODO_STATE_NAME" -o json --quiet --compact)
+  # Create issue via GraphQL — includes projectId and stateId at creation time
+  TRIVIAL_GQL_TMPFILE=$(mktemp)
+  trap 'rm -f "$TRIVIAL_GQL_TMPFILE"' EXIT
   if [[ -n "$TRIVIAL_DESC" ]]; then
-    TRIVIAL_TMPFILE=$(mktemp)
-    trap 'rm -f "$TRIVIAL_TMPFILE"' EXIT
-    echo "$TRIVIAL_DESC" > "$TRIVIAL_TMPFILE"
-    result=$($LINEAR_CLI issues create "${create_args[@]}" -d "$(cat "$TRIVIAL_TMPFILE")" 2>&1)
+    cat > "$TRIVIAL_GQL_TMPFILE" <<'GQLEOF'
+mutation($title: String!, $description: String, $teamId: String!, $stateId: String!, $projectId: String!) {
+  issueCreate(input: {
+    teamId: $teamId
+    title: $title
+    description: $description
+    stateId: $stateId
+    projectId: $projectId
+  }) {
+    success
+    issue { id identifier url }
+  }
+}
+GQLEOF
+    result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "title=$TRIVIAL_TITLE" \
+      -v "description=$TRIVIAL_DESC" \
+      -v "teamId=$TEAM_ID" \
+      -v "stateId=$TODO_STATE_ID" \
+      -v "projectId=$PROJECT_ID" \
+      - < "$TRIVIAL_GQL_TMPFILE" 2>&1)
   else
-    result=$($LINEAR_CLI issues create "${create_args[@]}" 2>&1)
+    cat > "$TRIVIAL_GQL_TMPFILE" <<'GQLEOF'
+mutation($title: String!, $teamId: String!, $stateId: String!, $projectId: String!) {
+  issueCreate(input: {
+    teamId: $teamId
+    title: $title
+    stateId: $stateId
+    projectId: $projectId
+  }) {
+    success
+    issue { id identifier url }
+  }
+}
+GQLEOF
+    result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "title=$TRIVIAL_TITLE" \
+      -v "teamId=$TEAM_ID" \
+      -v "stateId=$TODO_STATE_ID" \
+      -v "projectId=$PROJECT_ID" \
+      - < "$TRIVIAL_GQL_TMPFILE" 2>&1)
   fi
+  rm -f "$TRIVIAL_GQL_TMPFILE"
 
-  identifier=$(echo "$result" | jq -r '.identifier // empty')
-  url=$(echo "$result" | jq -r '.url // empty')
-  issue_id=$(echo "$result" | jq -r '.id // empty')
+  identifier=$(echo "$result" | jq -r '.data.issueCreate.issue.identifier // empty')
+  url=$(echo "$result" | jq -r '.data.issueCreate.issue.url // empty')
+  issue_id=$(echo "$result" | jq -r '.data.issueCreate.issue.id // empty')
+  success=$(echo "$result" | jq -r '.data.issueCreate.success // false')
 
-  if [[ -n "$identifier" ]]; then
-    # Assign to project
-    $LINEAR_CLI issues update "$identifier" --project "$PROJECT_ID" \
-      -o json --quiet --compact > /dev/null 2>&1 || \
-      echo "WARNING: Failed to assign to project" >&2
-
+  if [[ "$success" == "true" && -n "$identifier" ]]; then
     echo ""
     echo "=== Done (trivial) ==="
     echo "Issue: $identifier ($url)"
