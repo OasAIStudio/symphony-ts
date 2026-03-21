@@ -116,6 +116,11 @@ export function applyCodexEventToSession(
   session.codexReasoningTokens += reasoningTokensDelta;
   session.codexTotalInputTokens += inputTokensDelta;
   session.codexTotalOutputTokens += outputTokensDelta;
+  session.totalStageInputTokens += inputTokensDelta;
+  session.totalStageOutputTokens += outputTokensDelta;
+  session.totalStageTotalTokens += totalTokensDelta;
+  session.totalStageCacheReadTokens += cacheReadTokensDelta;
+  session.totalStageCacheWriteTokens += cacheWriteTokensDelta;
   session.lastReportedInputTokens = inputTokens;
   session.lastReportedOutputTokens = outputTokens;
   session.lastReportedTotalTokens = totalTokens;

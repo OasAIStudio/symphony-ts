@@ -103,6 +103,11 @@ export interface LiveSession {
   lastReportedOutputTokens: number;
   lastReportedTotalTokens: number;
   turnCount: number;
+  totalStageInputTokens: number;
+  totalStageOutputTokens: number;
+  totalStageTotalTokens: number;
+  totalStageCacheReadTokens: number;
+  totalStageCacheWriteTokens: number;
 }
 
 export interface RetryEntry {
@@ -207,6 +212,11 @@ export function createEmptyLiveSession(): LiveSession {
     lastReportedOutputTokens: 0,
     lastReportedTotalTokens: 0,
     turnCount: 0,
+    totalStageInputTokens: 0,
+    totalStageOutputTokens: 0,
+    totalStageTotalTokens: 0,
+    totalStageCacheReadTokens: 0,
+    totalStageCacheWriteTokens: 0,
   };
 }
 

@@ -263,6 +263,85 @@ describe("session metrics", () => {
     expect(running.codexOutputTokens).toBe(60);
   });
 
+  it("single-turn stage: totalStage fields match the single turn values", () => {
+    const running = createRunningEntry();
+
+    const event = createEvent("turn_completed", {
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+        cacheReadTokens: 3,
+        cacheWriteTokens: 2,
+      },
+    });
+
+    const state = createInitialOrchestratorState({
+      pollIntervalMs: 30_000,
+      maxConcurrentAgents: 3,
+    });
+    applyCodexEventToOrchestratorState(state, running, event);
+
+    expect(running.totalStageInputTokens).toBe(10);
+    expect(running.totalStageOutputTokens).toBe(5);
+    expect(running.totalStageTotalTokens).toBe(15);
+    expect(running.totalStageCacheReadTokens).toBe(3);
+    expect(running.totalStageCacheWriteTokens).toBe(2);
+  });
+
+  it("multi-turn stage: totalStage fields equal sum of all turn deltas", () => {
+    const running = createRunningEntry();
+    const state = createInitialOrchestratorState({
+      pollIntervalMs: 30_000,
+      maxConcurrentAgents: 3,
+    });
+
+    // First turn: absolute counters start from 0
+    const firstTurn = createEvent("notification", {
+      usage: {
+        inputTokens: 10,
+        outputTokens: 4,
+        totalTokens: 14,
+        cacheReadTokens: 2,
+        cacheWriteTokens: 1,
+      },
+    });
+    // Second turn: absolute counters increase
+    const secondTurn = createEvent("turn_completed", {
+      usage: {
+        inputTokens: 20,
+        outputTokens: 9,
+        totalTokens: 29,
+        cacheReadTokens: 5,
+        cacheWriteTokens: 3,
+      },
+    });
+
+    applyCodexEventToOrchestratorState(state, running, firstTurn);
+    applyCodexEventToOrchestratorState(state, running, secondTurn);
+
+    // inputTokensDelta for first = 10, for second = 10 (20-10), total = 20
+    expect(running.totalStageInputTokens).toBe(20);
+    // outputTokensDelta for first = 4, for second = 5 (9-4), total = 9
+    expect(running.totalStageOutputTokens).toBe(9);
+    // totalTokensDelta for first = 14, for second = 15 (29-14), total = 29
+    expect(running.totalStageTotalTokens).toBe(29);
+    // cacheReadTokens accumulated additively: 2 + 5 = 7
+    expect(running.totalStageCacheReadTokens).toBe(7);
+    // cacheWriteTokens accumulated additively: 1 + 3 = 4
+    expect(running.totalStageCacheWriteTokens).toBe(4);
+  });
+
+  it("zero-turn stage: all totalStage accumulator fields are 0", () => {
+    const running = createRunningEntry();
+
+    expect(running.totalStageInputTokens).toBe(0);
+    expect(running.totalStageOutputTokens).toBe(0);
+    expect(running.totalStageTotalTokens).toBe(0);
+    expect(running.totalStageCacheReadTokens).toBe(0);
+    expect(running.totalStageCacheWriteTokens).toBe(0);
+  });
+
   it("summarizes codex events for snapshot and log surfaces", () => {
     expect(
       summarizeCodexEvent(

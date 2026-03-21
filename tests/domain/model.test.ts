@@ -80,6 +80,11 @@ describe("domain model", () => {
       lastReportedOutputTokens: 0,
       lastReportedTotalTokens: 0,
       turnCount: 0,
+      totalStageInputTokens: 0,
+      totalStageOutputTokens: 0,
+      totalStageTotalTokens: 0,
+      totalStageCacheReadTokens: 0,
+      totalStageCacheWriteTokens: 0,
     });
 
     const state = createInitialOrchestratorState({
