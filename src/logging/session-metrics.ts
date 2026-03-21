@@ -54,6 +54,10 @@ export function applyCodexEventToSession(
 
   if (event.event === "session_started") {
     session.turnCount += 1;
+    // Reset per-turn absolute counters so the next turn's deltas accumulate from 0
+    session.lastReportedInputTokens = 0;
+    session.lastReportedOutputTokens = 0;
+    session.lastReportedTotalTokens = 0;
   }
 
   if (event.usage === undefined) {
@@ -110,6 +114,8 @@ export function applyCodexEventToSession(
   session.codexCacheWriteTokens += cacheWriteTokensDelta;
   session.codexNoCacheTokens += noCacheTokensDelta;
   session.codexReasoningTokens += reasoningTokensDelta;
+  session.codexTotalInputTokens += inputTokensDelta;
+  session.codexTotalOutputTokens += outputTokensDelta;
   session.lastReportedInputTokens = inputTokens;
   session.lastReportedOutputTokens = outputTokens;
   session.lastReportedTotalTokens = totalTokens;

@@ -110,6 +110,8 @@ describe("OrchestratorRuntimeHost", () => {
         codexCacheWriteTokens: 0,
         codexNoCacheTokens: 0,
         codexReasoningTokens: 0,
+        codexTotalInputTokens: 11,
+        codexTotalOutputTokens: 7,
         lastReportedInputTokens: 11,
         lastReportedOutputTokens: 7,
         lastReportedTotalTokens: 18,
@@ -391,6 +393,8 @@ describe("OrchestratorRuntimeHost", () => {
         codexCacheWriteTokens: 5,
         codexNoCacheTokens: 0,
         codexReasoningTokens: 20,
+        codexTotalInputTokens: 280,
+        codexTotalOutputTokens: 140,
         lastReportedInputTokens: 100,
         lastReportedOutputTokens: 50,
         lastReportedTotalTokens: 150,
@@ -420,6 +424,11 @@ describe("OrchestratorRuntimeHost", () => {
       cache_write_tokens: 5,
       reasoning_tokens: 20,
       turns_used: 3,
+      total_input_tokens: 280,
+      total_output_tokens: 140,
+      total_cache_read_tokens: 10,
+      total_cache_write_tokens: 5,
+      turn_count: 3,
       duration_ms: 5000,
       outcome: "completed",
     });
@@ -465,6 +474,11 @@ describe("OrchestratorRuntimeHost", () => {
       output_tokens: 0,
       total_tokens: 0,
       turns_used: 0,
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+      total_cache_read_tokens: 0,
+      total_cache_write_tokens: 0,
+      turn_count: 0,
       duration_ms: 0,
       outcome: "failed",
     });
@@ -523,6 +537,8 @@ describe("OrchestratorRuntimeHost", () => {
         codexCacheWriteTokens: 0,
         codexNoCacheTokens: 0,
         codexReasoningTokens: 0,
+        codexTotalInputTokens: 60,
+        codexTotalOutputTokens: 40,
         lastReportedInputTokens: 30,
         lastReportedOutputTokens: 20,
         lastReportedTotalTokens: 50,
@@ -542,6 +558,7 @@ describe("OrchestratorRuntimeHost", () => {
       event: "stage_completed",
       stage_name: "investigate",
       turns_used: 2,
+      turn_count: 2,
     });
   });
 
@@ -598,6 +615,8 @@ describe("OrchestratorRuntimeHost", () => {
         codexCacheWriteTokens: 0,
         codexNoCacheTokens: 42,
         codexReasoningTokens: 0,
+        codexTotalInputTokens: 100,
+        codexTotalOutputTokens: 50,
         lastReportedInputTokens: 100,
         lastReportedOutputTokens: 50,
         lastReportedTotalTokens: 150,
@@ -672,6 +691,8 @@ describe("OrchestratorRuntimeHost", () => {
         codexCacheWriteTokens: 0,
         codexNoCacheTokens: 0,
         codexReasoningTokens: 0,
+        codexTotalInputTokens: 100,
+        codexTotalOutputTokens: 50,
         lastReportedInputTokens: 100,
         lastReportedOutputTokens: 50,
         lastReportedTotalTokens: 150,
@@ -688,6 +709,140 @@ describe("OrchestratorRuntimeHost", () => {
     );
     expect(stageCompletedEntry).toBeDefined();
     expect(stageCompletedEntry).not.toHaveProperty("no_cache_tokens");
+  });
+
+  it("aggregates total_input_tokens and total_output_tokens across multiple turns in stage_completed", async () => {
+    const tracker = createTracker();
+    const fakeRunner = new FakeAgentRunner();
+    const entries: StructuredLogEntry[] = [];
+    const logger = new StructuredLogger([
+      {
+        write(entry) {
+          entries.push(entry);
+        },
+      },
+    ]);
+    const host = new OrchestratorRuntimeHost({
+      config: createConfig(),
+      tracker,
+      logger,
+      createAgentRunner: ({ onEvent }) => {
+        fakeRunner.onEvent = onEvent;
+        return fakeRunner;
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    await host.pollOnce();
+
+    // Turn 1: 100 input, 40 output
+    fakeRunner.emit("1", {
+      event: "session_started",
+      timestamp: "2026-03-06T00:00:01.000Z",
+      codexAppServerPid: "1001",
+      sessionId: "thread-1-turn-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+    });
+    fakeRunner.emit("1", {
+      event: "turn_completed",
+      timestamp: "2026-03-06T00:00:02.000Z",
+      codexAppServerPid: "1001",
+      sessionId: "thread-1-turn-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      usage: {
+        inputTokens: 100,
+        outputTokens: 40,
+        totalTokens: 140,
+        cacheReadTokens: 5,
+        cacheWriteTokens: 3,
+      },
+      message: "turn 1 done",
+    });
+
+    // Turn 2: 120 input, 60 output (absolute counters reset per turn)
+    fakeRunner.emit("1", {
+      event: "session_started",
+      timestamp: "2026-03-06T00:00:03.000Z",
+      codexAppServerPid: "1001",
+      sessionId: "thread-1-turn-2",
+      threadId: "thread-1",
+      turnId: "turn-2",
+    });
+    fakeRunner.emit("1", {
+      event: "turn_completed",
+      timestamp: "2026-03-06T00:00:04.000Z",
+      codexAppServerPid: "1001",
+      sessionId: "thread-1-turn-2",
+      threadId: "thread-1",
+      turnId: "turn-2",
+      usage: {
+        inputTokens: 120,
+        outputTokens: 60,
+        totalTokens: 180,
+        cacheReadTokens: 8,
+        cacheWriteTokens: 4,
+      },
+      message: "turn 2 done",
+    });
+    await host.flushEvents();
+
+    fakeRunner.resolve("1", {
+      issue: createIssue({ state: "In Progress" }),
+      workspace: {
+        path: "/tmp/workspaces/1",
+        workspaceKey: "1",
+        createdNow: true,
+      },
+      runAttempt: {
+        issueId: "1",
+        issueIdentifier: "ISSUE-1",
+        attempt: null,
+        workspacePath: "/tmp/workspaces/1",
+        startedAt: "2026-03-06T00:00:00.000Z",
+        status: "succeeded",
+      },
+      liveSession: {
+        sessionId: "thread-1-turn-2",
+        threadId: "thread-1",
+        turnId: "turn-2",
+        codexAppServerPid: "1001",
+        lastCodexEvent: "turn_completed",
+        lastCodexTimestamp: "2026-03-06T00:00:04.000Z",
+        lastCodexMessage: "turn 2 done",
+        codexInputTokens: 120,
+        codexOutputTokens: 60,
+        codexTotalTokens: 180,
+        codexCacheReadTokens: 13,
+        codexCacheWriteTokens: 7,
+        codexNoCacheTokens: 0,
+        codexReasoningTokens: 0,
+        codexTotalInputTokens: 220,
+        codexTotalOutputTokens: 100,
+        lastReportedInputTokens: 120,
+        lastReportedOutputTokens: 60,
+        lastReportedTotalTokens: 180,
+        turnCount: 4,
+      },
+      turnsCompleted: 4,
+      lastTurn: null,
+      rateLimits: null,
+    });
+    await host.waitForIdle();
+
+    const stageCompletedEntry = entries.find(
+      (e) => e.event === "stage_completed",
+    );
+    expect(stageCompletedEntry).toBeDefined();
+    expect(stageCompletedEntry).toMatchObject({
+      event: "stage_completed",
+      total_input_tokens: 220,
+      total_output_tokens: 100,
+      total_cache_read_tokens: 13,
+      total_cache_write_tokens: 7,
+      turn_count: 4,
+    });
   });
 });
 

@@ -208,6 +208,61 @@ describe("session metrics", () => {
     expect(result.reasoningTokensDelta).toBe(0);
   });
 
+  it("accumulates codexTotalInputTokens and codexTotalOutputTokens across multiple turns", () => {
+    const state = createInitialOrchestratorState({
+      pollIntervalMs: 30_000,
+      maxConcurrentAgents: 3,
+    });
+    const running = createRunningEntry();
+
+    // Turn 1 starts: session_started resets lastReported counters to 0
+    const turn1Start = createEvent("session_started", {
+      sessionId: "thread-1-turn-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+    });
+    applyCodexEventToOrchestratorState(state, running, turn1Start);
+
+    // Turn 1 completes: 100 input, 40 output
+    const turn1End = createEvent("turn_completed", {
+      usage: {
+        inputTokens: 100,
+        outputTokens: 40,
+        totalTokens: 140,
+      },
+    });
+    applyCodexEventToOrchestratorState(state, running, turn1End);
+
+    expect(running.codexTotalInputTokens).toBe(100);
+    expect(running.codexTotalOutputTokens).toBe(40);
+
+    // Turn 2 starts: session_started resets lastReported counters to 0
+    const turn2Start = createEvent("session_started", {
+      sessionId: "thread-1-turn-2",
+      threadId: "thread-1",
+      turnId: "turn-2",
+    });
+    applyCodexEventToOrchestratorState(state, running, turn2Start);
+
+    // Turn 2 completes: 120 input, 60 output (counter resets to 0 each turn)
+    const turn2End = createEvent("turn_completed", {
+      usage: {
+        inputTokens: 120,
+        outputTokens: 60,
+        totalTokens: 180,
+      },
+    });
+    applyCodexEventToOrchestratorState(state, running, turn2End);
+
+    // codexTotalInputTokens/OutputTokens should sum both turns: 100+120=220, 40+60=100
+    expect(running.codexTotalInputTokens).toBe(220);
+    expect(running.codexTotalOutputTokens).toBe(100);
+
+    // codexInputTokens still reflects the last absolute value (current turn only)
+    expect(running.codexInputTokens).toBe(120);
+    expect(running.codexOutputTokens).toBe(60);
+  });
+
   it("summarizes codex events for snapshot and log surfaces", () => {
     expect(
       summarizeCodexEvent(

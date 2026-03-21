@@ -37,6 +37,11 @@ export const LOG_FIELDS = [
   "dispatched_count",
   "running_count",
   "reconciled_stop_requests",
+  "total_input_tokens",
+  "total_output_tokens",
+  "total_cache_read_tokens",
+  "total_cache_write_tokens",
+  "turn_count",
 ] as const;
 
 export type LogField = (typeof LOG_FIELDS)[number];

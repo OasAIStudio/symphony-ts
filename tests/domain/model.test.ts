@@ -74,6 +74,8 @@ describe("domain model", () => {
       codexCacheWriteTokens: 0,
       codexNoCacheTokens: 0,
       codexReasoningTokens: 0,
+      codexTotalInputTokens: 0,
+      codexTotalOutputTokens: 0,
       lastReportedInputTokens: 0,
       lastReportedOutputTokens: 0,
       lastReportedTotalTokens: 0,

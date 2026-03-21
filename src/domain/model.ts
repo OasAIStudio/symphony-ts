@@ -97,6 +97,8 @@ export interface LiveSession {
   codexCacheWriteTokens: number;
   codexNoCacheTokens: number;
   codexReasoningTokens: number;
+  codexTotalInputTokens: number;
+  codexTotalOutputTokens: number;
   lastReportedInputTokens: number;
   lastReportedOutputTokens: number;
   lastReportedTotalTokens: number;
@@ -199,6 +201,8 @@ export function createEmptyLiveSession(): LiveSession {
     codexCacheWriteTokens: 0,
     codexNoCacheTokens: 0,
     codexReasoningTokens: 0,
+    codexTotalInputTokens: 0,
+    codexTotalOutputTokens: 0,
     lastReportedInputTokens: 0,
     lastReportedOutputTokens: 0,
     lastReportedTotalTokens: 0,
