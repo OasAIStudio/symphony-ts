@@ -42,8 +42,39 @@ hooks:
       echo "ERROR: REPO_URL environment variable is not set" >&2
       exit 1
     fi
-    echo "Cloning $REPO_URL into workspace..."
-    git clone --depth 1 "$REPO_URL" .
+
+    # --- Derive bare clone path (absolute, shared across workers) ---
+    REPO_SLUG=$(basename "${REPO_URL%.git}")
+    BARE_CLONE_DIR="$(cd .. && pwd)/.bare-clones"
+    BARE_CLONE="$BARE_CLONE_DIR/$REPO_SLUG"
+    WORKSPACE_DIR="$PWD"
+    ISSUE_KEY=$(basename "$WORKSPACE_DIR")
+    BRANCH_NAME="worktree/$ISSUE_KEY"
+
+    # --- Create bare clone if it doesn't exist (race-safe) ---
+    mkdir -p "$BARE_CLONE_DIR"
+    if [ ! -d "$BARE_CLONE" ]; then
+      echo "Creating shared bare clone for $REPO_SLUG..."
+      if ! git clone --bare "$REPO_URL" "$BARE_CLONE" 2>/dev/null; then
+        # Another worker may have created it concurrently — verify it exists
+        if [ ! -d "$BARE_CLONE" ]; then
+          echo "ERROR: Failed to create bare clone at $BARE_CLONE" >&2
+          exit 1
+        fi
+        echo "Bare clone already created by another worker."
+      fi
+    else
+      echo "Using existing bare clone at $BARE_CLONE"
+    fi
+
+    # --- Fetch latest refs into bare clone ---
+    git -C "$BARE_CLONE" fetch origin 2>/dev/null || echo "WARNING: fetch failed, using cached refs" >&2
+
+    # --- Create worktree for this issue ---
+    echo "Creating worktree for $ISSUE_KEY on branch $BRANCH_NAME..."
+    git -C "$BARE_CLONE" worktree add "$WORKSPACE_DIR" -b "$BRANCH_NAME" origin/main
+
+    # --- Install dependencies ---
     if [ -f package.json ]; then
       if [ -f bun.lock ]; then
         bun install --frozen-lockfile
@@ -55,22 +86,37 @@ hooks:
         npm install
       fi
     fi
-    echo "Workspace setup complete."
+    echo "Workspace setup complete (worktree: $BRANCH_NAME)."
   before_run: |
     set -euo pipefail
     echo "Syncing workspace with upstream..."
 
-    # --- Git lock handling ---
+    # --- Resolve git dir (worktree .git is a file, not a directory) ---
+    resolve_git_dir() {
+      if [ -f .git ]; then
+        # Worktree: .git is a file containing "gitdir: /path/to/.bare-clones/repo/worktrees/..."
+        sed 's/^gitdir: //' .git
+      elif [ -d .git ]; then
+        echo ".git"
+      else
+        echo ""
+      fi
+    }
+    GIT_DIR=$(resolve_git_dir)
+
+    # --- Git lock handling (works for both worktrees and regular clones) ---
     wait_for_git_lock() {
+      if [ -z "$GIT_DIR" ]; then return; fi
+      local lock_file="$GIT_DIR/index.lock"
       local attempt=0
-      while [ -f .git/index.lock ] && [ $attempt -lt 6 ]; do
-        echo "WARNING: .git/index.lock exists, waiting 5s (attempt $((attempt+1))/6)..." >&2
+      while [ -f "$lock_file" ] && [ $attempt -lt 6 ]; do
+        echo "WARNING: $lock_file exists, waiting 5s (attempt $((attempt+1))/6)..." >&2
         sleep 5
         attempt=$((attempt+1))
       done
-      if [ -f .git/index.lock ]; then
-        echo "WARNING: .git/index.lock still exists after 30s, removing stale lock" >&2
-        rm -f .git/index.lock
+      if [ -f "$lock_file" ]; then
+        echo "WARNING: $lock_file still exists after 30s, removing stale lock" >&2
+        rm -f "$lock_file"
       fi
     }
 
@@ -104,20 +150,37 @@ hooks:
     echo "Workspace synced."
   before_remove: |
     set -uo pipefail
+
+    # --- Handle case where worktree was never fully set up ---
+    if [ ! -e .git ]; then
+      echo "No git repo in workspace, nothing to clean up."
+      exit 0
+    fi
+
     BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
     if [ -z "$BRANCH" ] || [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ] || [ "$BRANCH" = "HEAD" ]; then
       exit 0
     fi
+
     echo "Cleaning up branch $BRANCH..."
-    # Close any open PR for this branch (also deletes the remote branch via --delete-branch)
+
+    # --- Close any open PR for this branch ---
     PR_NUM=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
     if [ -n "$PR_NUM" ]; then
       echo "Closing PR #$PR_NUM and deleting remote branch..."
       gh pr close "$PR_NUM" --delete-branch 2>/dev/null || true
     else
-      # No open PR — just delete the remote branch if it exists
       echo "No open PR found, deleting remote branch..."
       git push origin --delete "$BRANCH" 2>/dev/null || true
+    fi
+
+    # --- Remove worktree entry from bare clone ---
+    REPO_SLUG=$(basename "${REPO_URL%.git}")
+    BARE_CLONE="$(cd .. && pwd)/.bare-clones/$REPO_SLUG"
+    if [ -d "$BARE_CLONE" ]; then
+      echo "Removing worktree entry from bare clone..."
+      git -C "$BARE_CLONE" worktree remove "$PWD" --force 2>/dev/null || true
+      git -C "$BARE_CLONE" branch -D "$BRANCH" 2>/dev/null || true
     fi
     echo "Cleanup complete."
   timeout_ms: 120000
