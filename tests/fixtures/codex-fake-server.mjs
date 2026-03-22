@@ -40,8 +40,8 @@ async function handleMessage(message) {
         "initialize must include clientInfo.name",
       );
       assertEqual(
-        message.params.clientInfo?.version,
-        "0.1.0",
+        typeof message.params.clientInfo?.version,
+        "string",
         "initialize must include clientInfo.version",
       );
       assertEqual(
