@@ -1097,5 +1097,6 @@ case "${1:-}" in
   prune-branches)     shift; cmd_prune_branches "$@" ;;
   analyze)            shift; cmd_analyze "$@" ;;
   -h|--help)          usage ;;
+  --version|-V)       "$NODE_BIN" "$CLI_JS" --version ;;
   *)                  usage; exit 1 ;;
 esac

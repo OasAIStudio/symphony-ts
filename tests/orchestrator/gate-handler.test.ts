@@ -1175,4 +1175,10 @@ describe("formatExecutionReport", () => {
     expect(report).toContain("Total tokens");
     expect(report).toContain("0");
   });
+
+  it("version footer is present at end of execution report", () => {
+    const history: ExecutionHistory = [];
+    const report = formatExecutionReport("SYMPH-1", history);
+    expect(report).toMatch(/symphony-ts v.+$/);
+  });
 });

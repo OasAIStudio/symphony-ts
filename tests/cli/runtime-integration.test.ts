@@ -98,6 +98,7 @@ describe("runtime integration", () => {
 
     const logFile = await readFile(join(logsRoot, "symphony.jsonl"), "utf8");
     expect(logFile).toContain('"event":"runtime_starting"');
+    expect(logFile).toContain('"symphony_version"');
     expect(tracker.fetchIssuesByStates).toHaveBeenCalledWith([
       "Done",
       "Canceled",

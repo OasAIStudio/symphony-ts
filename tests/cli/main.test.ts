@@ -30,6 +30,7 @@ describe("cli", () => {
       port: 8080,
       acknowledged: true,
       help: false,
+      version: false,
     });
   });
 
@@ -55,6 +56,7 @@ describe("cli", () => {
         port: 8080,
         acknowledged: true,
         help: false,
+        version: false,
       },
       "/repo",
     );
@@ -214,6 +216,23 @@ describe("cli", () => {
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("boom"));
     expect(stderr).toHaveBeenCalledWith(
       "Symphony host exited abnormally with code 3.\n",
+    );
+  });
+
+  it("prints version and exits 0 when --version is passed", async () => {
+    const stdout = vi.fn();
+    const exitCode = await runCli(["--version"], {
+      io: { stdout, stderr: vi.fn() },
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout).toHaveBeenCalledWith(
+      expect.stringMatching(/^symphony-ts .+\n$/),
+    );
+  });
+
+  it("parses --version flag", () => {
+    expect(parseCliArgs(["--version"])).toEqual(
+      expect.objectContaining({ version: true }),
     );
   });
 });

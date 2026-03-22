@@ -1,4 +1,5 @@
 import type { RuntimeSnapshot } from "../logging/runtime-snapshot.js";
+import { getDisplayVersion } from "../version.js";
 import {
   escapeHtml,
   formatInteger,
@@ -592,7 +593,7 @@ ${DASHBOARD_STYLES}
         <header class="hero-card">
           <div class="hero-grid">
             <div>
-              <p class="eyebrow">Symphony Observability</p>
+              <p class="eyebrow">Symphony Observability — v${getDisplayVersion()}</p>
               <h1 class="hero-title">Operations Dashboard</h1>
               <p class="hero-copy">
                 Current state, retry pressure, token usage, and orchestration health for the active Symphony runtime.

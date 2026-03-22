@@ -18,6 +18,7 @@ import { WorkflowWatcher } from "../config/workflow-watch.js";
 import type { Issue, RetryEntry, RunningEntry } from "../domain/model.js";
 import { ERROR_CODES } from "../errors/codes.js";
 import { formatEasternTimestamp } from "../logging/format-timestamp.js";
+import { getDisplayVersion } from "../version.js";
 import {
   type RuntimeSnapshot,
   buildRuntimeSnapshot,
@@ -835,6 +836,7 @@ export async function startRuntimeService(
   };
 
   await logger.info("runtime_starting", "Symphony runtime started.", {
+    symphony_version: getDisplayVersion(),
     poll_interval_ms: currentConfig.polling.intervalMs,
     max_concurrent_agents: currentConfig.agent.maxConcurrentAgents,
     ...(dashboard === null ? {} : { port: dashboard.port }),

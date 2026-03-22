@@ -2,10 +2,11 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 
 import { ERROR_CODES } from "../errors/codes.js";
 import { formatEasternTimestamp } from "../logging/format-timestamp.js";
+import { VERSION } from "../version.js";
 
 const DEFAULT_CLIENT_INFO = Object.freeze({
   name: "symphony-ts",
-  version: "0.1.0",
+  version: VERSION,
 });
 
 const DEFAULT_MAX_LINE_BYTES = 10 * 1024 * 1024;

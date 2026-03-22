@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { RuntimeSnapshot } from "../../src/logging/runtime-snapshot.js";
 import { renderDashboardHtml } from "../../src/observability/dashboard-render.js";
+import { getDisplayVersion } from "../../src/version.js";
 
 const BASE_ROW: RuntimeSnapshot["running"][number] = {
   issue_id: "issue-1",
@@ -98,5 +99,11 @@ describe("Dashboard Pipeline column", () => {
     const snapshot = buildSnapshot({});
     const html = renderDashboardHtml(snapshot, { liveUpdatesEnabled: true });
     expect(html).toContain("formatPipelineTime");
+  });
+  it("dashboard shows version in hero header", () => {
+    const snapshot = buildSnapshot({});
+    const html = renderDashboardHtml(snapshot, { liveUpdatesEnabled: false });
+    expect(html).toContain(getDisplayVersion());
+    expect(html).toContain("Symphony Observability");
   });
 });

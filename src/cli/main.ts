@@ -13,6 +13,7 @@ import {
   type RuntimeServiceHandle,
   startRuntimeService,
 } from "../orchestrator/runtime-host.js";
+import { getDisplayVersion } from "../version.js";
 
 export const CLI_ACKNOWLEDGEMENT_FLAG = "--acknowledge-high-trust-preview";
 
@@ -22,6 +23,7 @@ export interface CliOptions {
   port: number | null;
   acknowledged: boolean;
   help: boolean;
+  version: boolean;
 }
 
 export interface CliRuntimeSettings {
@@ -68,6 +70,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   let port: number | null = null;
   let acknowledged = false;
   let help = false;
+  let version = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -88,6 +91,11 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
 
     if (token === "--help" || token === "-h") {
       help = true;
+      continue;
+    }
+
+    if (token === "--version" || token === "-V") {
+      version = true;
       continue;
     }
 
@@ -126,6 +134,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
     port,
     acknowledged,
     help,
+    version,
   };
 }
 
@@ -177,6 +186,11 @@ export async function runCli(
   } catch (error) {
     io.stderr(`${formatCliError(error)}\n${renderUsage()}`);
     return 1;
+  }
+
+  if (options.version) {
+    io.stdout(`symphony-ts ${getDisplayVersion()}\n`);
+    return 0;
   }
 
   if (options.help) {

@@ -4,6 +4,7 @@ import type { AgentRunnerCodexClient } from "../agent/runner.js";
 import type { CodexTurnResult } from "../codex/app-server-client.js";
 import type { ReviewerDefinition, StageDefinition } from "../config/types.js";
 import type { ExecutionHistory, Issue } from "../domain/model.js";
+import { getDisplayVersion } from "../version.js";
 
 /**
  * Known rate-limit / quota-exhaustion phrases that may appear in reviewer
@@ -477,6 +478,8 @@ export function formatExecutionReport(
   }
 
   lines.push("", `**Total tokens:** ${totalTokens.toLocaleString("en-US")}`);
+
+  lines.push("", "---", `_symphony-ts v${getDisplayVersion()}_`);
 
   return lines.join("\n");
 }

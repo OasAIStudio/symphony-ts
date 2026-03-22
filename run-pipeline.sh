@@ -56,6 +56,10 @@ if [[ $# -eq 0 ]] || [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
   usage
 fi
 
+if [[ "$1" == "--version" ]] || [[ "$1" == "-V" ]]; then
+  exec node "$SCRIPT_DIR/dist/src/cli/main.js" --version
+fi
+
 PRODUCT="$1"
 shift
 
