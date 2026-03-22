@@ -174,9 +174,119 @@ verify_issue_creation() {
   fi
 }
 
+# ── Post-creation verification (parent only, no project check) ─────────────
+# Queries an issue by ID and confirms parent.id matches expected value.
+# Used for sub-issues where projectId is deferred until after relation verification.
+# Args: $1=issue_uuid, $2=expected_parent_id
+verify_issue_creation_parent_only() {
+  local issue_uuid="$1"
+  local expected_parent_id="$2"
+
+  # Skip verification in dry-run mode (no API calls)
+  if [[ "$DRY_RUN" == true ]]; then
+    return 0
+  fi
+
+  local verify_result
+  verify_result=$($LINEAR_CLI api query -o json --quiet --compact \
+    -v "issueId=$issue_uuid" \
+    'query($issueId: String!) { issue(id: $issueId) { parent { id } } }' 2>/dev/null) || true
+
+  local actual_parent
+  actual_parent=$(echo "$verify_result" | jq -r '.data.issue.parent.id // empty')
+  if [[ -n "$actual_parent" && "$actual_parent" != "$expected_parent_id" ]]; then
+    echo "WARNING: parent mismatch on $issue_uuid — expected parent=$expected_parent_id, got $actual_parent" >&2
+  elif [[ -z "$actual_parent" ]]; then
+    echo "WARNING: VERIFY FAIL — could not confirm parent.id for $issue_uuid" >&2
+  fi
+}
+
+# ── Verify blocking relations on sub-issues ──────────────────────────────────
+# Queries each sub-issue's inverseRelations and confirms the correct blocker
+# identity and direction (type=blocks). Returns non-zero on failure.
+# Globals: SUB_ISSUE_IDS[], SUB_ISSUE_IDENTIFIERS[], SORTED_INDICES[], TOTAL
+verify_blocking_relations() {
+  local all_ok=true
+
+  for ((k=1; k<TOTAL; k++)); do
+    local curr_idx="${SORTED_INDICES[$k]}"
+    local prev_idx="${SORTED_INDICES[$((k-1))]}"
+    local curr_id="${SUB_ISSUE_IDS[$curr_idx]:-}"
+    local prev_id="${SUB_ISSUE_IDS[$prev_idx]:-}"
+    local curr_ident="${SUB_ISSUE_IDENTIFIERS[$curr_idx]:-}"
+    local prev_ident="${SUB_ISSUE_IDENTIFIERS[$prev_idx]:-}"
+
+    if [[ -z "$curr_id" || -z "$prev_id" ]]; then
+      echo "WARNING: Skipping relation check — missing sub-issue ID for index $k" >&2
+      all_ok=false
+      continue
+    fi
+
+    local rel_result
+    rel_result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "issueId=$curr_id" \
+      'query($issueId: String!) { issue(id: $issueId) { inverseRelations { nodes { type relatedIssue { id } } } } }' 2>/dev/null) || true
+
+    # Check that there is a blocks-type inverseRelation from the predecessor
+    local found
+    found=$(echo "$rel_result" | jq -r --arg pred "$prev_id" \
+      '.data.issue.inverseRelations.nodes[] | select(.type == "blocks" and .relatedIssue.id == $pred) | .type' 2>/dev/null | head -1)
+
+    if [[ "$found" != "blocks" ]]; then
+      echo "ERROR: $curr_ident missing expected blocks relation from $prev_ident" >&2
+      all_ok=false
+    else
+      echo "  ✓ $curr_ident blocked by $prev_ident (verified)"
+    fi
+  done
+
+  if [[ "$all_ok" != true ]]; then
+    return 1
+  fi
+  return 0
+}
+
+# ── Batch project assignment via issueUpdate ──────────────────────────────────
+# Assigns projectId to all sub-issues after blocking relations are verified.
+# Globals: SUB_ISSUE_IDS[], SUB_ISSUE_IDENTIFIERS[], SORTED_INDICES[], TOTAL
+assign_project_to_sub_issues() {
+  echo ""
+  echo "Assigning project to sub-issues (deferred)..."
+  local gql_tmpfile
+  for ((k=0; k<TOTAL; k++)); do
+    local idx="${SORTED_INDICES[$k]}"
+    local sub_id="${SUB_ISSUE_IDS[$idx]:-}"
+    local sub_ident="${SUB_ISSUE_IDENTIFIERS[$idx]:-}"
+
+    if [[ -z "$sub_id" ]]; then
+      echo "  Skipping index $idx — no sub-issue ID" >&2
+      continue
+    fi
+
+    gql_tmpfile=$(mktemp)
+    cat > "$gql_tmpfile" <<GQLEOF
+mutation { issueUpdate(id: "${sub_id}", input: { projectId: "${PROJECT_ID}" }) { success issue { id identifier } } }
+GQLEOF
+
+    local result
+    result=$($LINEAR_CLI api query -o json --quiet --compact - < "$gql_tmpfile" 2>&1)
+    rm -f "$gql_tmpfile"
+
+    local success
+    success=$(echo "$result" | jq -r '.data.issueUpdate.success // false')
+    if [[ "$success" == "true" ]]; then
+      echo "  ✓ $sub_ident assigned to project (issueUpdate projectId)"
+    else
+      echo "  WARNING: Failed to assign project to $sub_ident" >&2
+      echo "  Response: $result" >&2
+    fi
+  done
+}
+
 # ── Trivial mode: single issue in Todo, no spec ─────────────────────────────
 
 if [[ "$TRIVIAL" == true ]]; then
+  # TRIVIAL mode: creates single issue with projectId at creation time (unchanged)
   if [[ -z "$TRIVIAL_TITLE" ]]; then
     echo "ERROR: --trivial requires a title argument." >&2
     echo "  Usage: freeze-and-queue.sh --trivial 'Fix the typo in README' <workflow-path>" >&2
@@ -641,6 +751,11 @@ if [[ "$DRY_RUN" == true ]]; then
   [[ $overlap_count -eq 0 ]] && echo "    (none)"
 
   echo ""
+  echo "--- DEFERRED PROJECT ASSIGNMENT ---"
+  echo "Sub-issues created without project assignment."
+  echo "After all relations are created and verified, each sub-issue"
+  echo "receives projectId via issueUpdate (deferred batch assignment)."
+  echo ""
   echo "=== Dry run complete: 1 parent + $TOTAL sub-issues (Todo) + $relation_count relations would be created ==="
   exit 0
 fi
@@ -740,6 +855,7 @@ GQLEOF
   fi
 else
   echo ""
+  # Creating parent issue — includes projectId at creation time (unchanged)
   echo "Creating parent issue..."
 
   # Spec parent: issueCreate mutation via temp file (title/description are user-provided strings)
@@ -848,17 +964,16 @@ for ((k=0; k<TOTAL; k++)); do
   echo "$sub_body" > "$SPEC_TMPFILE"
 
   # Build sub-issue issueCreate mutation via temp file (title/description are user-provided strings)
-  # Includes both projectId and parentId at creation time — no separate API calls needed.
+  # projectId is deferred — assigned via issueUpdate after blocking relations are verified.
   # Priority is inlined as integer literal to avoid Int/String type coercion issues with -v flag.
   GQL_TMPFILE=$(mktemp)
   if [[ -n "$TODO_STATE_ID" ]]; then
     cat > "$GQL_TMPFILE" <<GQLEOF
-mutation(\$title: String!, \$description: String!, \$teamId: String!, \$projectId: String!, \$parentId: String!, \$stateId: String!) {
+mutation(\$title: String!, \$description: String!, \$teamId: String!, \$parentId: String!, \$stateId: String!) {
   issueCreate(input: {
     title: \$title
     description: \$description
     teamId: \$teamId
-    projectId: \$projectId
     parentId: \$parentId
     stateId: \$stateId
     priority: ${linear_priority}
@@ -872,18 +987,16 @@ GQLEOF
       -v "title=$title" \
       -v "description=$(cat "$SPEC_TMPFILE")" \
       -v "teamId=$TEAM_ID" \
-      -v "projectId=$PROJECT_ID" \
       -v "parentId=$PARENT_ID" \
       -v "stateId=$TODO_STATE_ID" \
       - < "$GQL_TMPFILE" 2>&1)
   else
     cat > "$GQL_TMPFILE" <<GQLEOF
-mutation(\$title: String!, \$description: String!, \$teamId: String!, \$projectId: String!, \$parentId: String!) {
+mutation(\$title: String!, \$description: String!, \$teamId: String!, \$parentId: String!) {
   issueCreate(input: {
     title: \$title
     description: \$description
     teamId: \$teamId
-    projectId: \$projectId
     parentId: \$parentId
     priority: ${linear_priority}
   }) {
@@ -896,7 +1009,6 @@ GQLEOF
       -v "title=$title" \
       -v "description=$(cat "$SPEC_TMPFILE")" \
       -v "teamId=$TEAM_ID" \
-      -v "projectId=$PROJECT_ID" \
       -v "parentId=$PARENT_ID" \
       - < "$GQL_TMPFILE" 2>&1)
   fi
@@ -918,7 +1030,7 @@ GQLEOF
         ((relation_count++))
       fi
     fi
-    verify_issue_creation "$sub_id" "$PROJECT_SLUG" "$PARENT_ID"
+    verify_issue_creation_parent_only "$sub_id" "$PARENT_ID"
 
     prev_sub_id="$sub_id"
     prev_sub_ident="$sub_identifier"
@@ -958,6 +1070,23 @@ for ((i=0; i<TOTAL; i++)); do
 done
 
 [[ $relation_count -eq 0 ]] && echo "  (none)"
+
+# ── Verify blocking relations before project assignment ──────────────────────
+
+if [[ $TOTAL -gt 1 ]]; then
+  echo ""
+  echo "Verifying blocking relations..."
+  if ! verify_blocking_relations; then
+    echo "ERROR: Blocking relation verification failed. Project NOT assigned to sub-issues." >&2
+    exit 1
+  fi
+  echo "All blocking relations verified."
+fi
+
+# ── Batch project assignment (deferred) ──────────────────────────────────────
+# Project is assigned after sub-issue creation and relation verification pass.
+
+assign_project_to_sub_issues
 
 # ── Transition parent to Backlog (sub-issues now frozen) ─────────────────────
 # Only reached when PARENT_ONLY=false (--parent-only exits at line 555)
