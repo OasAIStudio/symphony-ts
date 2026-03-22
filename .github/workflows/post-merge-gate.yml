@@ -5,6 +5,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
   gate:
     runs-on: ubuntu-latest
@@ -45,6 +48,58 @@ jobs:
         id: build
         if: always() && steps.test.outcome != 'cancelled'
         run: pnpm build
+
+      - name: Bump calver version
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Retry loop handles race when concurrent merges push at the same time
+          for ATTEMPT in 1 2 3; do
+            git pull --rebase origin main
+
+            # Read current version after pulling latest
+            CURRENT_VERSION=$(node -p "require('./package.json').version")
+            TODAY=$(date -u +"%Y.%m.%d")
+
+            # Extract date prefix and sequence from current version
+            CURRENT_PREFIX=$(echo "$CURRENT_VERSION" | cut -d. -f1-3)
+            CURRENT_SEQ=$(echo "$CURRENT_VERSION" | cut -d. -f4)
+
+            # Determine next sequence
+            if [ "$CURRENT_PREFIX" = "$TODAY" ]; then
+              NEXT_SEQ=$((CURRENT_SEQ + 1))
+            else
+              NEXT_SEQ=1
+            fi
+
+            NEXT_VERSION="${TODAY}.${NEXT_SEQ}"
+
+            # Update package.json version field directly (avoids npm lockfile side-effects)
+            node -e "
+              const fs = require('fs');
+              const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+              pkg.version = '${NEXT_VERSION}';
+              fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+            "
+
+            git add package.json
+            git commit -m "chore: bump calver to ${NEXT_VERSION} [skip ci]"
+
+            if git push; then
+              echo "::notice::Bumped version to ${NEXT_VERSION}"
+              exit 0
+            fi
+
+            echo "::warning::Push failed (attempt ${ATTEMPT}/3), retrying..."
+            git reset --soft HEAD~1
+          done
+
+          echo "::error::Failed to push calver bump after 3 attempts"
+          exit 1
 
       - name: Create Linear issue on failure
         if: failure()
