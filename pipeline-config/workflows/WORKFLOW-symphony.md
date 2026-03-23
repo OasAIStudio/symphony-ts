@@ -432,7 +432,7 @@ Read ALL comments on this Linear issue starting with `## Review Findings`. These
    - Run `semgrep scan --config auto --json 2>&1` (if available) and include raw output in PR body under `## SAST Output`
    - Do NOT filter or interpret SAST results — include them verbatim.
 7. Commit your changes with message format: `feat({{ issue.identifier }}): <description>`.
-8. Open a PR via `gh pr create` with the issue description in the PR body. Include the Tool Output and SAST Output sections.
+8. Open a PR targeting this repo (not its upstream fork parent) via `gh pr create --repo $(gh repo view --json nameWithOwner -q .nameWithOwner)` with the issue description in the PR body. Include the Tool Output and SAST Output sections.
 9. Link the PR to the Linear issue by including `{{ issue.identifier }}` in the PR title or body.
 
 ### Workpad (implement)
@@ -487,7 +487,7 @@ This repo uses GitHub's merge queue. When you run `gh pr merge`, GitHub will:
 In BOTH cases, the merge is not immediate — GitHub queues it, rebases, runs CI on the rebased version, then merges. This is normal behavior. Do NOT interpret it as a failure.
 
 ### Step 1: Merge the PR
-Run `gh pr merge --squash --delete-branch`. This single command is sufficient. Do NOT:
+Run `gh pr merge --squash --delete-branch --repo $(gh repo view --json nameWithOwner -q .nameWithOwner)`. This single command is sufficient. Do NOT:
 - Retry the merge command if you see a "merge queue" or "auto-merge" response — that IS success
 - Run `gh pr merge` with `--admin` to bypass the queue
 - Modify any code in this stage

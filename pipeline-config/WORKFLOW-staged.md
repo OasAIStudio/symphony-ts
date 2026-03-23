@@ -287,7 +287,7 @@ This is a rework attempt. Read ALL comments on this Linear issue starting with `
    - Run `semgrep scan --config auto --json 2>&1` (if available) and include raw output in PR body under `## SAST Output`
    - Do NOT filter or interpret SAST results — include them verbatim.
 7. Commit your changes with message format: `feat({{ issue.identifier }}): <description>`.
-8. Open a PR via `gh pr create` with the issue description in the PR body. Include the Tool Output and SAST Output sections.
+8. Open a PR targeting this repo (not its upstream fork parent) via `gh pr create --repo $(gh repo view --json nameWithOwner -q .nameWithOwner)` with the issue description in the PR body. Include the Tool Output and SAST Output sections.
 9. Link the PR to the Linear issue by including `{{ issue.identifier }}` in the PR title or body.
 
 ### Workpad (implement)
@@ -333,7 +333,7 @@ If surviving P1/P2 findings exist: post them as a `## Review Findings` comment o
 {% if stageName == "merge" %}
 ## Stage: Merge
 You are in the MERGE stage. The PR has been reviewed and approved.
-- Merge the PR via `gh pr merge --squash --delete-branch`
+- Merge the PR via `gh pr merge --squash --delete-branch --repo $(gh repo view --json nameWithOwner -q .nameWithOwner)`
 - Verify the merge succeeded on the main branch
 - Do NOT modify code in this stage
 

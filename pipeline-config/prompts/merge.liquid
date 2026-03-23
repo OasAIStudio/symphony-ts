@@ -14,7 +14,7 @@ You are merging the PR for Linear issue {{ issue.identifier }}.
 2. If CI is not green, do NOT merge. Report the failure and stop.
 3. Squash merge the PR via:
    ```
-   gh pr merge --squash --delete-branch
+   gh pr merge --squash --delete-branch --repo $(gh repo view --json nameWithOwner -q .nameWithOwner)
    ```
 4. Update the Linear issue state to "Done" using the `linear_graphql` tool.
 5. Verify the merge was successful by checking the PR status.

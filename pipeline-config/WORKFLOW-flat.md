@@ -90,7 +90,7 @@ Labels: {{ issue.labels | join: ", " }}
 4. Write tests as needed.
 5. Run all `# Verify:` commands from the spec. You are not done until every verify command exits 0.
 6. Commit your changes with message format: `feat({{ issue.identifier }}): <description>`.
-7. Open a PR via `gh pr create` with the issue description in the PR body.
+7. Open a PR targeting this repo (not its upstream fork parent) via `gh pr create --repo $(gh repo view --json nameWithOwner -q .nameWithOwner)` with the issue description in the PR body.
 8. Link the PR to the Linear issue by including `{{ issue.identifier }}` in the PR title or body.
 
 ## Scope Discipline
