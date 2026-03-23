@@ -1,0 +1,275 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# symphony-deploy — pull, build, and restart symphony-ts on the server
+# Usage: symphony-deploy [--dry-run] [--no-restart] [--symphony] [--config]
+
+SCRIPT_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
+SYMPHONY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Defaults — override via environment
+CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/projects/claude-config}"
+CTL="$SCRIPT_DIR/symphony-ctl"
+
+# Colors (disabled if not a terminal)
+if [[ -t 1 ]]; then
+  RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; CYAN='\033[0;36m'; NC='\033[0m'
+else
+  RED=''; GREEN=''; YELLOW=''; CYAN=''; NC=''
+fi
+
+info()  { echo -e "${CYAN}▸${NC} $*"; }
+ok()    { echo -e "${GREEN}✓${NC} $*"; }
+warn()  { echo -e "${YELLOW}⚠${NC} $*" >&2; }
+die()   { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
+
+# --- Helpers ---
+
+usage() {
+  cat <<EOF
+symphony-deploy — pull, build, and restart symphony-ts on the server
+
+Usage: symphony-deploy [flags]
+
+Flags:
+  --dry-run       Show what each step would do without executing
+  --no-restart    Pull and build but skip service restart
+  --symphony      Only update symphony-ts repo
+  --config        Only update claude-config repo
+
+If neither --symphony nor --config is given, both are updated.
+
+Environment:
+  CLAUDE_CONFIG_DIR   Path to claude-config repo (default: ~/projects/claude-config)
+  SYMPHONY_PROJECT    Project name for symphony-ctl (default: symphony)
+
+EOF
+}
+
+# --- Flags ---
+
+DRY_RUN=false
+NO_RESTART=false
+DO_SYMPHONY=false
+DO_CONFIG=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)      DRY_RUN=true ;;
+    --no-restart)   NO_RESTART=true ;;
+    --symphony)     DO_SYMPHONY=true ;;
+    --config)       DO_CONFIG=true ;;
+    -h|--help)      usage; exit 0 ;;
+    *)              die "Unknown flag: $1" ;;
+  esac
+  shift
+done
+
+# Default: both repos if neither specified
+if ! $DO_SYMPHONY && ! $DO_CONFIG; then
+  DO_SYMPHONY=true
+  DO_CONFIG=true
+fi
+
+run_or_dry() {
+  if $DRY_RUN; then
+    info "[dry-run] $*"
+  else
+    "$@"
+  fi
+}
+
+# Check if symphony-ctl service is installed (plist exists)
+service_installed() {
+  [[ -f "$HOME/Library/LaunchAgents/com.symphony.${SYMPHONY_PROJECT:-symphony}.plist" ]]
+}
+
+get_version() {
+  if [[ -x "$CTL" ]]; then
+    "$CTL" --version 2>/dev/null || echo "(unknown)"
+  else
+    echo "(symphony-ctl not found)"
+  fi
+}
+
+# --- Pull a git repo ---
+# Arguments: repo_path repo_label
+# Sets globals: _PRE_SHA _POST_SHA _LOCKFILE_CHANGED _ENV_ENC_CHANGED
+pull_repo() {
+  local repo_path="$1"
+  local label="$2"
+
+  info "Pulling $label ($repo_path)..."
+  _PRE_SHA="$(git -C "$repo_path" rev-parse HEAD)"
+
+  if $DRY_RUN; then
+    info "[dry-run] git -C $repo_path pull --ff-only"
+    _POST_SHA="$_PRE_SHA"
+    _LOCKFILE_CHANGED=false
+    _ENV_ENC_CHANGED=false
+    return
+  fi
+
+  git -C "$repo_path" pull --ff-only || die "git pull --ff-only failed in $repo_path. Branches may have diverged — resolve manually."
+  _POST_SHA="$(git -C "$repo_path" rev-parse HEAD)"
+
+  if [[ "$_PRE_SHA" == "$_POST_SHA" ]]; then
+    ok "$label already up to date (${_PRE_SHA:0:8})"
+    _LOCKFILE_CHANGED=false
+    _ENV_ENC_CHANGED=false
+    return
+  fi
+
+  ok "$label updated: ${_PRE_SHA:0:8} → ${_POST_SHA:0:8}"
+
+  # Check what changed between old and new SHA
+  local changed_files
+  changed_files="$(git -C "$repo_path" diff --name-only "$_PRE_SHA" "$_POST_SHA")"
+
+  _LOCKFILE_CHANGED=false
+  if echo "$changed_files" | grep -q '^pnpm-lock\.yaml$'; then
+    _LOCKFILE_CHANGED=true
+  fi
+
+  _ENV_ENC_CHANGED=false
+  if echo "$changed_files" | grep -q '^\.env\.enc$'; then
+    _ENV_ENC_CHANGED=true
+  fi
+}
+
+# --- Main ---
+
+if $DRY_RUN; then
+  info "symphony-deploy [DRY RUN]"
+else
+  info "symphony-deploy"
+fi
+echo ""
+
+NEED_ENV_RESTART=false
+SYMPHONY_UPDATED=false
+SYMPH_PRE_SHA=""
+SYMPH_POST_SHA=""
+
+# --- 1. Symphony-ts repo ---
+if $DO_SYMPHONY; then
+  info "=== symphony-ts ==="
+  [[ -d "$SYMPHONY_ROOT/.git" ]] || die "Not a git repo: $SYMPHONY_ROOT"
+
+  # Pre-deploy version
+  info "Pre-deploy version: $(get_version)"
+
+  info "Ensuring symphony-ts is on main..."
+  run_or_dry git -C "$SYMPHONY_ROOT" checkout main
+
+  pull_repo "$SYMPHONY_ROOT" "symphony-ts"
+  SYMPH_PRE_SHA="$_PRE_SHA"
+  SYMPH_POST_SHA="$_POST_SHA"
+
+  if [[ "$SYMPH_PRE_SHA" != "$SYMPH_POST_SHA" ]]; then
+    SYMPHONY_UPDATED=true
+
+    # pnpm install if lockfile changed
+    if $_LOCKFILE_CHANGED; then
+      info "pnpm-lock.yaml changed — installing dependencies..."
+      run_or_dry pnpm install --frozen-lockfile --dir "$SYMPHONY_ROOT"
+      ok "Dependencies installed"
+    else
+      ok "pnpm-lock.yaml unchanged — skipping install"
+    fi
+
+    # Always rebuild if code changed
+    info "Building..."
+    run_or_dry pnpm run --dir "$SYMPHONY_ROOT" build
+    ok "Build complete"
+  fi
+
+  # Decrypt .env.enc if it's newer than .env
+  local_env="$SYMPHONY_ROOT/.env"
+  local_enc="$SYMPHONY_ROOT/.env.enc"
+  if [[ -f "$local_enc" ]]; then
+    if [[ ! -f "$local_env" ]] || [[ "$local_enc" -nt "$local_env" ]]; then
+      info ".env.enc is newer than .env — decrypting..."
+      if $DRY_RUN; then
+        info "[dry-run] sops --decrypt $local_enc > $local_env"
+      else
+        sops --decrypt "$local_enc" > "$local_env"
+      fi
+      ok ".env decrypted"
+      NEED_ENV_RESTART=true
+    else
+      ok ".env is current — skipping decrypt"
+    fi
+  fi
+
+  echo ""
+fi
+
+# --- 2. Claude-config repo ---
+if $DO_CONFIG; then
+  info "=== claude-config ==="
+
+  if [[ ! -d "$CLAUDE_CONFIG_DIR" ]]; then
+    warn "claude-config dir not found at $CLAUDE_CONFIG_DIR — skipping"
+  elif [[ ! -d "$CLAUDE_CONFIG_DIR/.git" ]]; then
+    warn "$CLAUDE_CONFIG_DIR is not a git repo — skipping"
+  else
+    pull_repo "$CLAUDE_CONFIG_DIR" "claude-config"
+    CONFIG_PRE_SHA="$_PRE_SHA"
+    CONFIG_POST_SHA="$_POST_SHA"
+
+    # Apply config changes (symlinks skills, CLAUDE.md, RTK.md, merges settings.json)
+    if [[ -x "$CLAUDE_CONFIG_DIR/deploy.sh" ]]; then
+      info "Applying claude-config..."
+      run_or_dry "$CLAUDE_CONFIG_DIR/deploy.sh"
+      ok "claude-config applied"
+    fi
+  fi
+
+  echo ""
+fi
+
+# --- 3. Service restart ---
+if ! $NO_RESTART && $DO_SYMPHONY; then
+  info "=== Service ==="
+
+  if ! service_installed; then
+    info "Service not installed — skipping restart"
+  elif $NEED_ENV_RESTART; then
+    # .env changed — must uninstall/install to rebake env vars into plist
+    info ".env was refreshed — reinstalling service (plist bakes env vars)..."
+    run_or_dry "$CTL" uninstall
+    run_or_dry "$CTL" install
+    run_or_dry "$CTL" start
+    ok "Service reinstalled and started"
+  elif $SYMPHONY_UPDATED; then
+    info "Code updated — restarting service..."
+    run_or_dry "$CTL" restart
+    ok "Service restarted"
+  else
+    ok "No changes — service left as-is"
+  fi
+
+  echo ""
+fi
+
+# --- 4. Summary ---
+info "=== Summary ==="
+
+if $DO_SYMPHONY; then
+  printf "  symphony-ts:   %s → %s\n" "${SYMPH_PRE_SHA:0:8}" "${SYMPH_POST_SHA:0:8}"
+  info "Post-deploy version: $(get_version)"
+fi
+
+if $DO_CONFIG; then
+  if [[ -n "${CONFIG_PRE_SHA:-}" ]]; then
+    printf "  claude-config: %s → %s\n" "${CONFIG_PRE_SHA:0:8}" "${CONFIG_POST_SHA:0:8}"
+  else
+    printf "  claude-config: (skipped)\n"
+  fi
+fi
+
+if $DRY_RUN; then
+  echo ""
+  info "Dry run complete — no changes were made."
+fi

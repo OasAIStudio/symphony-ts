@@ -98,6 +98,7 @@ describe("runtime integration", () => {
 
     const logFile = await readFile(join(logsRoot, "symphony.jsonl"), "utf8");
     expect(logFile).toContain('"event":"runtime_starting"');
+    expect(logFile).toContain('"symphony_version"');
     expect(tracker.fetchIssuesByStates).toHaveBeenCalledWith([
       "Done",
       "Canceled",
@@ -578,6 +579,7 @@ function createConfig(
       maxConcurrentAgents: 10,
       maxTurns: 20,
       maxRetryBackoffMs: 300_000,
+      maxRetryAttempts: 5,
       maxConcurrentAgentsByState: {},
     },
     codex: {
@@ -597,6 +599,12 @@ function createConfig(
       refreshMs: 1_000,
       renderIntervalMs: 16,
     },
+    runner: {
+      kind: "codex",
+      model: null,
+    },
+    stages: null,
+    escalationState: null,
     ...overrides,
   };
 }

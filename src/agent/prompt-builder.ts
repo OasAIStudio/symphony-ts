@@ -35,6 +35,8 @@ export interface RenderPromptInput {
   workflow: Pick<WorkflowDefinition, "promptTemplate">;
   issue: Issue;
   attempt: number | null;
+  stageName?: string | null;
+  reworkCount?: number;
 }
 
 export interface BuildTurnPromptInput extends RenderPromptInput {
@@ -57,6 +59,8 @@ export async function renderPrompt(input: RenderPromptInput): Promise<string> {
     return await liquidEngine.render(parsedTemplate, {
       issue: toTemplateIssue(input.issue),
       attempt: input.attempt,
+      stageName: input.stageName ?? null,
+      reworkCount: input.reworkCount ?? 0,
     });
   } catch (error) {
     throw toPromptTemplateError(error);
@@ -75,6 +79,7 @@ export async function buildTurnPrompt(
     attempt: input.attempt,
     turnNumber: input.turnNumber,
     maxTurns: input.maxTurns,
+    stageName: input.stageName ?? null,
   });
 }
 
@@ -83,13 +88,14 @@ export function buildContinuationPrompt(input: {
   attempt: number | null;
   turnNumber: number;
   maxTurns: number;
+  stageName?: string | null;
 }): string {
   const attemptLine =
     input.attempt === null
       ? "This worker session started from the initial dispatch."
       : `This worker session is running retry/continuation attempt ${input.attempt}.`;
 
-  return [
+  const lines = [
     `Continue working on issue ${input.issue.identifier}: ${input.issue.title}.`,
     `This is continuation turn ${input.turnNumber} of ${input.maxTurns} in the current worker session.`,
     attemptLine,
@@ -97,7 +103,36 @@ export function buildContinuationPrompt(input: {
     "Reuse the existing thread context and current workspace state.",
     "Do not restate the original task prompt unless it is strictly needed.",
     "Make the next best progress on the issue, then stop when this session has no further useful work to do.",
-  ].join("\n");
+  ];
+
+  if (input.stageName) {
+    lines.push(`Current stage: ${input.stageName}.`);
+
+    switch (input.stageName) {
+      case "investigate":
+        lines.push(
+          "CONSTRAINT: You are in the INVESTIGATE stage. Do NOT implement code, create branches, or open PRs. Investigation and planning only. When you have posted your investigation findings, output the exact text [STAGE_COMPLETE] as the last line of your final message.",
+        );
+        break;
+      case "implement":
+        lines.push(
+          "You are in the IMPLEMENT stage. Focus on implementing the code changes, running tests, and opening a PR. When you have opened a PR and all verify commands pass, output the exact text [STAGE_COMPLETE] as the last line of your final message.",
+        );
+        break;
+      case "merge":
+        lines.push(
+          "You are in the MERGE stage. Merge the PR and verify the merge succeeded. When you have successfully merged the PR, output the exact text [STAGE_COMPLETE] as the last line of your final message.",
+        );
+        break;
+      default:
+        lines.push(
+          `When you have completed the ${input.stageName} stage, output the exact text [STAGE_COMPLETE] as the last line of your final message.`,
+        );
+        break;
+    }
+  }
+
+  return lines.join("\n");
 }
 
 function toTemplateIssue(issue: Issue): Record<string, unknown> {

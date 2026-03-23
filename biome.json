@@ -2,7 +2,7 @@
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
   "files": {
     "ignoreUnknown": true,
-    "ignore": ["dist/**", "node_modules/**"]
+    "ignore": ["dist/**", "node_modules/**", "pipeline-config/**"]
   },
   "formatter": {
     "enabled": true,
@@ -23,5 +23,17 @@
       "semicolons": "always",
       "trailingCommas": "all"
     }
-  }
+  },
+  "overrides": [
+    {
+      "include": ["**/*.test.ts", "**/tests/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
+    }
+  ]
 }

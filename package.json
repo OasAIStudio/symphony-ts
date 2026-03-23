@@ -37,7 +37,7 @@
     "build": "tsc -p tsconfig.build.json",
     "prepack": "pnpm build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test": "node scripts/test.mjs",
     "test:watch": "vitest",
     "lint": "biome check .",
     "format": "biome format --write ."
@@ -49,6 +49,13 @@
     "vitest": "^3.0.8"
   },
   "dependencies": {
+    "@ai-sdk/provider": "^3.0.8",
+    "@google/gemini-cli-core": "^0.33.2",
+    "@google/genai": "^1.45.0",
+    "@slack/bolt": "^4.6.0",
+    "ai": "^6.0.116",
+    "ai-sdk-provider-claude-code": "^3.4.4",
+    "ai-sdk-provider-gemini-cli": "^2.0.1",
     "graphql": "^16.13.1",
     "liquidjs": "^10.24.0",
     "yaml": "^2.8.2",

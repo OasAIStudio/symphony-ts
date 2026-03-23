@@ -5,3 +5,6 @@ coverage/
 *.tgz
 
 .worktrees/
+.env
+pipeline-config/workflows/workspaces/
+pipeline-config/workspaces/

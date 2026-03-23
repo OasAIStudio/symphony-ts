@@ -30,6 +30,7 @@ describe("cli", () => {
       port: 8080,
       acknowledged: true,
       help: false,
+      version: false,
     });
   });
 
@@ -55,6 +56,7 @@ describe("cli", () => {
         port: 8080,
         acknowledged: true,
         help: false,
+        version: false,
       },
       "/repo",
     );
@@ -216,6 +218,23 @@ describe("cli", () => {
       "Symphony host exited abnormally with code 3.\n",
     );
   });
+
+  it("prints version and exits 0 when --version is passed", async () => {
+    const stdout = vi.fn();
+    const exitCode = await runCli(["--version"], {
+      io: { stdout, stderr: vi.fn() },
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout).toHaveBeenCalledWith(
+      expect.stringMatching(/^symphony-ts .+\n$/),
+    );
+  });
+
+  it("parses --version flag", () => {
+    expect(parseCliArgs(["--version"])).toEqual(
+      expect.objectContaining({ version: true }),
+    );
+  });
 });
 
 function createConfig(
@@ -249,6 +268,7 @@ function createConfig(
       maxConcurrentAgents: 10,
       maxTurns: 20,
       maxRetryBackoffMs: 300_000,
+      maxRetryAttempts: 5,
       maxConcurrentAgentsByState: {},
     },
     codex: {
@@ -268,6 +288,12 @@ function createConfig(
       refreshMs: 1_000,
       renderIntervalMs: 16,
     },
+    runner: {
+      kind: "codex",
+      model: null,
+    },
+    stages: null,
+    escalationState: null,
     ...overrides,
   };
 }

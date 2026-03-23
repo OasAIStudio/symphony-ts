@@ -1,10 +1,12 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 
 import { ERROR_CODES } from "../errors/codes.js";
+import { formatEasternTimestamp } from "../logging/format-timestamp.js";
+import { VERSION } from "../version.js";
 
 const DEFAULT_CLIENT_INFO = Object.freeze({
   name: "symphony-ts",
-  version: "0.1.0",
+  version: VERSION,
 });
 
 const DEFAULT_MAX_LINE_BYTES = 10 * 1024 * 1024;
@@ -16,6 +18,10 @@ export interface CodexUsage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  noCacheTokens?: number;
+  reasoningTokens?: number;
 }
 
 export type CodexTurnStatus = "completed" | "failed" | "cancelled";
@@ -33,7 +39,8 @@ export interface CodexClientEvent {
     | "unsupported_tool_call"
     | "notification"
     | "other_message"
-    | "malformed";
+    | "malformed"
+    | "activity_heartbeat";
   timestamp: string;
   codexAppServerPid: string | null;
   sessionId?: string | null;
@@ -783,7 +790,7 @@ export class CodexAppServerClient {
   ): void {
     this.options.onEvent?.({
       ...input,
-      timestamp: new Date().toISOString(),
+      timestamp: formatEasternTimestamp(new Date()),
       codexAppServerPid:
         this.child?.pid === undefined ? null : String(this.child.pid),
     });
