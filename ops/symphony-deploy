@@ -10,6 +10,7 @@ SYMPHONY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Defaults — override via environment
 CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/projects/claude-config}"
 CTL="$SCRIPT_DIR/symphony-ctl"
+export SOPS_AGE_KEY_FILE="${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}"
 
 # Colors (disabled if not a terminal)
 if [[ -t 1 ]]; then
