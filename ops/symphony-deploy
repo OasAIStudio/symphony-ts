@@ -159,6 +159,9 @@ if $DO_SYMPHONY; then
   # Pre-deploy version
   info "Pre-deploy version: $(get_version)"
 
+  info "Ensuring symphony-ts is on main..."
+  run_or_dry git -C "$SYMPHONY_ROOT" checkout main
+
   pull_repo "$SYMPHONY_ROOT" "symphony-ts"
   SYMPH_PRE_SHA="$_PRE_SHA"
   SYMPH_POST_SHA="$_POST_SHA"
