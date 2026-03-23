@@ -12,6 +12,7 @@ vi.mock("ai-sdk-provider-claude-code", () => ({
 import { streamText } from "ai";
 import { claudeCode } from "ai-sdk-provider-claude-code";
 
+import type { BoltMessageArgs } from "../src/slack-bot/handler.js";
 import { createMessageHandler } from "../src/slack-bot/handler.js";
 import {
   createCcSessionStore,
@@ -20,37 +21,55 @@ import {
 } from "../src/slack-bot/session-store.js";
 import type { ChannelProjectMap, SessionMap } from "../src/slack-bot/types.js";
 
-// Helper to create a mock thread
-function createMockThread(channelId: string, threadTs: string) {
-  return {
-    id: `slack:${channelId}:${threadTs}`,
-    channelId,
-    adapter: {
-      addReaction: vi.fn().mockResolvedValue(undefined),
-      removeReaction: vi.fn().mockResolvedValue(undefined),
-    },
-    post: vi.fn().mockResolvedValue({ id: "sent-msg-1" }),
+/** Create a mock Bolt message args object. */
+function createMockBoltArgs(
+  channelId: string,
+  text: string,
+  overrides?: Partial<{
+    ts: string;
+    thread_ts: string;
+  }>,
+): {
+  args: BoltMessageArgs;
+  say: ReturnType<typeof vi.fn>;
+  client: {
+    reactions: {
+      add: ReturnType<typeof vi.fn>;
+      remove: ReturnType<typeof vi.fn>;
+    };
   };
-}
+} {
+  const say = vi.fn().mockResolvedValue(undefined);
+  const client = {
+    reactions: {
+      add: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+    },
+  };
 
-// Helper to create a mock message
-function createMockMessage(text: string) {
-  return {
-    id: "msg-ts-1234",
+  const message: Record<string, unknown> = {
+    type: "message" as const,
     text,
-    threadId: "slack:C123:1234.5678",
-    author: {
-      userId: "U999",
-      userName: "testuser",
-      fullName: "Test User",
-      isBot: false,
-      isMe: false,
-    },
-    metadata: { dateSent: new Date(), edited: false },
-    attachments: [],
-    formatted: { type: "root" as const, children: [] },
-    raw: {},
+    ts: overrides?.ts ?? "1234.5678",
+    channel: channelId,
   };
+  if (overrides?.thread_ts) {
+    message.thread_ts = overrides.thread_ts;
+  }
+
+  const args = {
+    message,
+    say,
+    client,
+    context: {},
+    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    next: vi.fn(),
+    event: message,
+    payload: message,
+    body: { event: message },
+  } as unknown as BoltMessageArgs;
+
+  return { args, say, client };
 }
 
 // Helper to create an async iterable from strings
@@ -113,10 +132,11 @@ describe("Session continuity in handler", () => {
     const sessions: SessionMap = new Map();
     const ccSessions = createCcSessionStore();
     const mockModel = { id: "mock-claude-code-model" };
-    const threadId = "slack:C123:1234.5678";
+    // Thread ID = message.thread_ts || message.ts
+    const threadTs = "1234.5678";
 
     // Pre-populate a CC session ID for this thread (simulates prior interaction)
-    setCcSessionId(ccSessions, threadId, "existing-session-id");
+    setCcSessionId(ccSessions, threadTs, "existing-session-id");
 
     vi.mocked(claudeCode).mockReturnValue(
       mockModel as unknown as ReturnType<typeof claudeCode>,
@@ -131,13 +151,11 @@ describe("Session continuity in handler", () => {
       ccSessions,
     });
 
-    const thread = createMockThread("C123", "1234.5678");
-    const message = createMockMessage("follow-up question");
-
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
+    const { args } = createMockBoltArgs("C123", "follow-up question", {
+      ts: "1234.9999",
+      thread_ts: threadTs,
+    });
+    await handler(args);
 
     // Verify claudeCode was called with resume option
     expect(claudeCode).toHaveBeenCalledWith(
@@ -173,13 +191,10 @@ describe("Session continuity in handler", () => {
       ccSessions,
     });
 
-    const thread = createMockThread("C123", "5678.9012");
-    const message = createMockMessage("brand new message");
-
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
+    const { args } = createMockBoltArgs("C123", "brand new message", {
+      ts: "5678.9012",
+    });
+    await handler(args);
 
     // Verify claudeCode was called WITHOUT resume
     expect(claudeCode).toHaveBeenCalledWith(expect.any(String), {
@@ -209,16 +224,11 @@ describe("Session continuity in handler", () => {
       ccSessions,
     });
 
-    const thread = createMockThread("C123", "1234.5678");
-    const message = createMockMessage("test");
+    const { args } = createMockBoltArgs("C123", "test", { ts: "1234.5678" });
+    await handler(args);
 
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
-
-    // Verify session ID was stored
-    expect(getCcSessionId(ccSessions, thread.id)).toBe("returned-session-id");
+    // Thread ID = message.thread_ts || message.ts = "1234.5678"
+    expect(getCcSessionId(ccSessions, "1234.5678")).toBe("returned-session-id");
   });
 
   it("does not store session ID when provider metadata lacks it", async () => {
@@ -241,15 +251,10 @@ describe("Session continuity in handler", () => {
       ccSessions,
     });
 
-    const thread = createMockThread("C123", "1234.5678");
-    const message = createMockMessage("test");
-
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
+    const { args } = createMockBoltArgs("C123", "test", { ts: "1234.5678" });
+    await handler(args);
 
     // Verify no session ID was stored
-    expect(getCcSessionId(ccSessions, thread.id)).toBeUndefined();
+    expect(getCcSessionId(ccSessions, "1234.5678")).toBeUndefined();
   });
 });

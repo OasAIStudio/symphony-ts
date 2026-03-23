@@ -7,43 +7,43 @@
  * - x: completed with error
  * - warning: configuration issue (e.g., unmapped channel)
  */
-import type { Adapter } from "chat";
+import type { webApi } from "@slack/bolt";
 
 /** Mark a message as being processed (add eyes reaction). */
 export async function markProcessing(
-  adapter: Adapter,
-  threadId: string,
-  messageId: string,
+  client: webApi.WebClient,
+  channel: string,
+  timestamp: string,
 ): Promise<void> {
-  await adapter.addReaction(threadId, messageId, "eyes");
+  await client.reactions.add({ channel, timestamp, name: "eyes" });
 }
 
 /** Mark a message as successfully completed (replace eyes with checkmark). */
 export async function markSuccess(
-  adapter: Adapter,
-  threadId: string,
-  messageId: string,
+  client: webApi.WebClient,
+  channel: string,
+  timestamp: string,
 ): Promise<void> {
-  await adapter.removeReaction(threadId, messageId, "eyes");
-  await adapter.addReaction(threadId, messageId, "white_check_mark");
+  await client.reactions.remove({ channel, timestamp, name: "eyes" });
+  await client.reactions.add({ channel, timestamp, name: "white_check_mark" });
 }
 
 /** Mark a message as failed (replace eyes with x). */
 export async function markError(
-  adapter: Adapter,
-  threadId: string,
-  messageId: string,
+  client: webApi.WebClient,
+  channel: string,
+  timestamp: string,
 ): Promise<void> {
-  await adapter.removeReaction(threadId, messageId, "eyes");
-  await adapter.addReaction(threadId, messageId, "x");
+  await client.reactions.remove({ channel, timestamp, name: "eyes" });
+  await client.reactions.add({ channel, timestamp, name: "x" });
 }
 
 /** Mark a message as having a configuration warning (replace eyes with warning). */
 export async function markWarning(
-  adapter: Adapter,
-  threadId: string,
-  messageId: string,
+  client: webApi.WebClient,
+  channel: string,
+  timestamp: string,
 ): Promise<void> {
-  await adapter.removeReaction(threadId, messageId, "eyes");
-  await adapter.addReaction(threadId, messageId, "warning");
+  await client.reactions.remove({ channel, timestamp, name: "eyes" });
+  await client.reactions.add({ channel, timestamp, name: "warning" });
 }

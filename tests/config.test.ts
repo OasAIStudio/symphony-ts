@@ -12,42 +12,54 @@ vi.mock("ai-sdk-provider-claude-code", () => ({
 import { streamText } from "ai";
 import { claudeCode } from "ai-sdk-provider-claude-code";
 
+import type { BoltMessageArgs } from "../src/slack-bot/handler.js";
 import { createMessageHandler } from "../src/slack-bot/handler.js";
 import { createCcSessionStore } from "../src/slack-bot/session-store.js";
 import { parseSlashCommand } from "../src/slack-bot/slash-commands.js";
 import type { ChannelProjectMap, SessionMap } from "../src/slack-bot/types.js";
 
-// Helper to create a mock thread
-function createMockThread(channelId: string) {
-  return {
-    id: `slack:${channelId}:1234.5678`,
-    channelId,
-    adapter: {
-      addReaction: vi.fn().mockResolvedValue(undefined),
-      removeReaction: vi.fn().mockResolvedValue(undefined),
-    },
-    post: vi.fn().mockResolvedValue({ id: "sent-msg-1" }),
+/** Create a mock Bolt message args object. */
+function createMockBoltArgs(
+  channelId: string,
+  text: string,
+): {
+  args: BoltMessageArgs;
+  say: ReturnType<typeof vi.fn>;
+  client: {
+    reactions: {
+      add: ReturnType<typeof vi.fn>;
+      remove: ReturnType<typeof vi.fn>;
+    };
   };
-}
+} {
+  const say = vi.fn().mockResolvedValue(undefined);
+  const client = {
+    reactions: {
+      add: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+    },
+  };
 
-// Helper to create a mock message
-function createMockMessage(text: string) {
-  return {
-    id: "msg-ts-1234",
+  const message = {
+    type: "message" as const,
     text,
-    threadId: "slack:C123:1234.5678",
-    author: {
-      userId: "U999",
-      userName: "testuser",
-      fullName: "Test User",
-      isBot: false,
-      isMe: false,
-    },
-    metadata: { dateSent: new Date(), edited: false },
-    attachments: [],
-    formatted: { type: "root" as const, children: [] },
-    raw: {},
+    ts: "1234.5678",
+    channel: channelId,
   };
+
+  const args = {
+    message,
+    say,
+    client,
+    context: {},
+    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    next: vi.fn(),
+    event: message,
+    payload: message,
+    body: { event: message },
+  } as unknown as BoltMessageArgs;
+
+  return { args, say, client };
 }
 
 // Helper to create an async iterable from strings
@@ -126,20 +138,20 @@ describe("Channel-to-project mapping via slash command", () => {
       ccSessions,
     });
 
-    const thread = createMockThread("C456");
-    const message = createMockMessage("/project set ~/projects/jony");
-
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
+    const { args, say, client } = createMockBoltArgs(
+      "C456",
+      "/project set ~/projects/jony",
     );
+    await handler(args);
 
     // Verify channelMap was updated
     expect(channelMap.get("C456")).toBe("~/projects/jony");
 
     // Verify confirmation message was posted
-    expect(thread.post).toHaveBeenCalledWith(
-      expect.stringContaining("~/projects/jony"),
+    expect(say).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("~/projects/jony"),
+      }),
     );
 
     // Verify Claude Code was NOT invoked for the slash command
@@ -147,7 +159,7 @@ describe("Channel-to-project mapping via slash command", () => {
     expect(claudeCode).not.toHaveBeenCalled();
 
     // Verify no reaction was added (slash commands skip reaction flow)
-    expect(thread.adapter.addReaction).not.toHaveBeenCalled();
+    expect(client.reactions.add).not.toHaveBeenCalled();
   });
 
   it("uses updated project dir for subsequent messages in the channel", async () => {
@@ -168,22 +180,12 @@ describe("Channel-to-project mapping via slash command", () => {
     });
 
     // First: set the project via slash command
-    const thread1 = createMockThread("C456");
-    const setMessage = createMockMessage("/project set ~/projects/jony");
-
-    await handler(
-      thread1 as unknown as Parameters<typeof handler>[0],
-      setMessage as unknown as Parameters<typeof handler>[1],
-    );
+    const setArgs = createMockBoltArgs("C456", "/project set ~/projects/jony");
+    await handler(setArgs.args);
 
     // Then: send a regular message in the same channel
-    const thread2 = createMockThread("C456");
-    const regularMessage = createMockMessage("What files are here?");
-
-    await handler(
-      thread2 as unknown as Parameters<typeof handler>[0],
-      regularMessage as unknown as Parameters<typeof handler>[1],
-    );
+    const regularArgs = createMockBoltArgs("C456", "What files are here?");
+    await handler(regularArgs.args);
 
     // Verify claudeCode was called with the new project dir
     expect(claudeCode).toHaveBeenCalledWith(
@@ -203,13 +205,8 @@ describe("Channel-to-project mapping via slash command", () => {
       ccSessions,
     });
 
-    const thread = createMockThread("C456");
-    const message = createMockMessage("/project set /new/project");
-
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
+    const { args } = createMockBoltArgs("C456", "/project set /new/project");
+    await handler(args);
 
     expect(channelMap.get("C456")).toBe("/new/project");
   });

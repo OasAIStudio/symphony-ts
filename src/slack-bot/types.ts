@@ -12,8 +12,8 @@ export type ChannelProjectMap = Map<string, string>;
 export interface SlackBotConfig {
   /** Slack bot token (xoxb-...) */
   botToken: string;
-  /** Slack signing secret for webhook verification */
-  signingSecret: string;
+  /** Slack app-level token (xapp-...) for Socket Mode */
+  appToken: string;
   /** Channel ID → project directory mapping */
   channelMap: ChannelProjectMap;
   /**

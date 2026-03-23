@@ -12,6 +12,7 @@ vi.mock("ai-sdk-provider-claude-code", () => ({
 import { streamText } from "ai";
 import { claudeCode } from "ai-sdk-provider-claude-code";
 
+import type { BoltMessageArgs } from "../../src/slack-bot/handler.js";
 import { createMessageHandler } from "../../src/slack-bot/handler.js";
 import { createCcSessionStore } from "../../src/slack-bot/session-store.js";
 import type {
@@ -19,37 +20,48 @@ import type {
   SessionMap,
 } from "../../src/slack-bot/types.js";
 
-// Helper to create a mock thread
-function createMockThread(channelId: string) {
-  return {
-    id: `slack:${channelId}:1234.5678`,
-    channelId,
-    adapter: {
-      addReaction: vi.fn().mockResolvedValue(undefined),
-      removeReaction: vi.fn().mockResolvedValue(undefined),
-    },
-    post: vi.fn().mockResolvedValue({ id: "sent-msg-1" }),
+/** Create a mock Bolt message args object. */
+function createMockBoltArgs(
+  channelId: string,
+  text: string,
+): {
+  args: BoltMessageArgs;
+  say: ReturnType<typeof vi.fn>;
+  client: {
+    reactions: {
+      add: ReturnType<typeof vi.fn>;
+      remove: ReturnType<typeof vi.fn>;
+    };
   };
-}
+} {
+  const say = vi.fn().mockResolvedValue(undefined);
+  const client = {
+    reactions: {
+      add: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+    },
+  };
 
-// Helper to create a mock message
-function createMockMessage(text: string) {
-  return {
-    id: "msg-ts-1234",
+  const message = {
+    type: "message" as const,
     text,
-    threadId: "slack:C123:1234.5678",
-    author: {
-      userId: "U999",
-      userName: "testuser",
-      fullName: "Test User",
-      isBot: false,
-      isMe: false,
-    },
-    metadata: { dateSent: new Date(), edited: false },
-    attachments: [],
-    formatted: { type: "root" as const, children: [] },
-    raw: {},
+    ts: "1234.5678",
+    channel: channelId,
   };
+
+  const args = {
+    message,
+    say,
+    client,
+    context: {},
+    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    next: vi.fn(),
+    event: message,
+    payload: message,
+    body: { event: message },
+  } as unknown as BoltMessageArgs;
+
+  return { args, say, client };
 }
 
 // Helper to create an async iterable from strings
@@ -84,26 +96,22 @@ describe("Reaction lifecycle", () => {
       sessions,
       ccSessions: createCcSessionStore(),
     });
-    const thread = createMockThread("C123");
-    const message = createMockMessage("test");
+    const { args, client } = createMockBoltArgs("C123", "test");
 
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
+    await handler(args);
 
     // Verify eyes reaction was added first
-    expect(thread.adapter.addReaction).toHaveBeenCalledWith(
-      thread.id,
-      message.id,
-      "eyes",
+    expect(client.reactions.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "C123",
+        timestamp: "1234.5678",
+        name: "eyes",
+      }),
     );
     // Eyes should be the first call to addReaction
-    expect(thread.adapter.addReaction.mock.calls[0]).toEqual([
-      thread.id,
-      message.id,
-      "eyes",
-    ]);
+    expect(client.reactions.add.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ name: "eyes" }),
+    );
   });
 
   it("replaces eyes with white_check_mark on successful completion", async () => {
@@ -126,35 +134,27 @@ describe("Reaction lifecycle", () => {
       sessions,
       ccSessions: createCcSessionStore(),
     });
-    const thread = createMockThread("C123");
-    const message = createMockMessage("test");
+    const { args, client } = createMockBoltArgs("C123", "test");
 
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
+    await handler(args);
 
     // Verify eyes was removed
-    expect(thread.adapter.removeReaction).toHaveBeenCalledWith(
-      thread.id,
-      message.id,
-      "eyes",
+    expect(client.reactions.remove).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "eyes" }),
     );
 
     // Verify white_check_mark was added
-    expect(thread.adapter.addReaction).toHaveBeenCalledWith(
-      thread.id,
-      message.id,
-      "white_check_mark",
+    expect(client.reactions.add).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "white_check_mark" }),
     );
 
     // Verify order: eyes added → eyes removed → checkmark added
-    const addCalls = thread.adapter.addReaction.mock.calls;
-    const removeCalls = thread.adapter.removeReaction.mock.calls;
+    const addCalls = client.reactions.add.mock.calls;
+    const removeCalls = client.reactions.remove.mock.calls;
 
-    expect(addCalls[0]?.[2]).toBe("eyes");
-    expect(removeCalls[0]?.[2]).toBe("eyes");
-    expect(addCalls[1]?.[2]).toBe("white_check_mark");
+    expect(addCalls[0]?.[0]?.name).toBe("eyes");
+    expect(removeCalls[0]?.[0]?.name).toBe("eyes");
+    expect(addCalls[1]?.[0]?.name).toBe("white_check_mark");
   });
 
   it("replaces eyes with x reaction on error", async () => {
@@ -189,32 +189,25 @@ describe("Reaction lifecycle", () => {
       sessions,
       ccSessions: createCcSessionStore(),
     });
-    const thread = createMockThread("C123");
-    const message = createMockMessage("test");
+    const { args, client } = createMockBoltArgs("C123", "test");
 
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
+    await handler(args);
 
     // Verify eyes was removed
-    expect(thread.adapter.removeReaction).toHaveBeenCalledWith(
-      thread.id,
-      message.id,
-      "eyes",
+    expect(client.reactions.remove).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "eyes" }),
     );
 
     // Verify x was added (not white_check_mark)
-    expect(thread.adapter.addReaction).toHaveBeenCalledWith(
-      thread.id,
-      message.id,
-      "x",
+    expect(client.reactions.add).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "x" }),
     );
 
     // Verify white_check_mark was NOT added
-    const addCalls = thread.adapter.addReaction.mock.calls;
+    const addCalls = client.reactions.add.mock.calls;
     const checkmarkCalls = addCalls.filter(
-      (call: unknown[]) => call[2] === "white_check_mark",
+      (call: unknown[]) =>
+        (call[0] as Record<string, unknown>)?.name === "white_check_mark",
     );
     expect(checkmarkCalls).toHaveLength(0);
   });

@@ -1,14 +1,14 @@
 /**
  * Core message handler for the Slack bot.
  *
- * Receives messages via the Chat SDK, manages reaction indicators,
+ * Receives messages via Bolt's app.message() listener, manages reaction indicators,
  * invokes Claude Code via the AI SDK streamText, and posts threaded replies.
  * Supports session continuity (thread replies resume CC sessions) and
  * runtime channel-to-project mapping via /project set slash commands.
  */
+import type { AllMiddlewareArgs, SlackEventMiddlewareArgs } from "@slack/bolt";
 import { streamText } from "ai";
 import { claudeCode } from "ai-sdk-provider-claude-code";
-import type { Adapter, Message, Thread } from "chat";
 
 import { chunkResponse } from "../chunking.js";
 import {
@@ -35,6 +35,10 @@ export interface HandleMessageOptions {
   model?: string;
 }
 
+/** Bolt message handler arguments. */
+export type BoltMessageArgs = SlackEventMiddlewareArgs<"message"> &
+  AllMiddlewareArgs;
+
 /**
  * Split a response into paragraph-sized chunks at `\n\n` boundaries.
  * Returns the original text as a single-element array if no paragraph breaks exist.
@@ -48,50 +52,72 @@ export function splitAtParagraphs(text: string): string[] {
 }
 
 /**
- * Creates a message handler function for use with `chat.onNewMessage()`.
+ * Creates a message handler function for use with `app.message()`.
  */
 export function createMessageHandler(options: HandleMessageOptions) {
   const { channelMap, sessions, ccSessions, model = "sonnet" } = options;
 
-  return async (thread: Thread, message: Message): Promise<void> => {
-    const adapter: Adapter = thread.adapter;
+  return async (args: BoltMessageArgs): Promise<void> => {
+    const { message, say, client } = args;
+
+    // Filter bot's own messages and message updates/deletions
+    const subtype = "subtype" in message ? message.subtype : undefined;
+    if (
+      "bot_id" in message ||
+      subtype === "bot_message" ||
+      subtype === "message_changed" ||
+      subtype === "message_deleted"
+    ) {
+      return;
+    }
+
+    // Extract message text — only present on GenericMessageEvent (no subtype)
+    const text = "text" in message ? (message.text ?? "") : "";
+
+    // Derive thread and message identifiers
+    const threadTs =
+      "thread_ts" in message ? (message.thread_ts ?? message.ts) : message.ts;
+    const messageTs = message.ts;
+    const channel = message.channel;
 
     // Check for slash commands before anything else
-    const command = parseSlashCommand(message.text);
+    const command = parseSlashCommand(text);
     if (command) {
       if (command.type === "project-set") {
-        channelMap.set(thread.channelId, command.path);
-        await thread.post(
-          `Project directory for this channel set to \`${command.path}\`.`,
-        );
+        channelMap.set(channel, command.path);
+        await say({
+          text: `Project directory for this channel set to \`${command.path}\`.`,
+          thread_ts: threadTs,
+        });
       }
       return;
     }
 
     // Add eyes reaction to indicate processing
-    await markProcessing(adapter, thread.id, message.id);
+    await markProcessing(client, channel, messageTs);
 
     try {
       // Resolve channel → project directory
-      const projectDir = channelMap.get(thread.channelId);
+      const projectDir = channelMap.get(channel);
       if (!projectDir) {
-        await thread.post(
-          `No project directory mapped for channel \`${thread.channelId}\`. Please configure a channel-to-project mapping.`,
-        );
-        await markWarning(adapter, thread.id, message.id);
+        await say({
+          text: `No project directory mapped for channel \`${channel}\`. Please configure a channel-to-project mapping.`,
+          thread_ts: threadTs,
+        });
+        await markWarning(client, channel, messageTs);
         return;
       }
 
       // Track session
-      sessions.set(thread.id, {
-        channelId: thread.channelId,
+      sessions.set(threadTs, {
+        channelId: channel,
         projectDir,
         lastActiveAt: new Date(),
       });
 
       // Build CC provider options with session continuity
       const resolvedModel = resolveClaudeModelId(model);
-      const existingSessionId = getCcSessionId(ccSessions, thread.id);
+      const existingSessionId = getCcSessionId(ccSessions, threadTs);
       const ccOptions: {
         cwd: string;
         permissionMode: "bypassPermissions";
@@ -107,7 +133,7 @@ export function createMessageHandler(options: HandleMessageOptions) {
       // Invoke Claude Code via AI SDK streamText
       const result = streamText({
         model: claudeCode(resolvedModel, ccOptions),
-        prompt: message.text,
+        prompt: text,
       });
 
       // Collect full response text via streaming utility
@@ -120,24 +146,24 @@ export function createMessageHandler(options: HandleMessageOptions) {
         | undefined;
       const ccSessionId = lastMsg?.providerMetadata?.["claude-code"]?.sessionId;
       if (ccSessionId) {
-        setCcSessionId(ccSessions, thread.id, ccSessionId);
+        setCcSessionId(ccSessions, threadTs, ccSessionId);
       }
 
       // Split at paragraph boundaries respecting Slack's 39K char limit
       const chunks = chunkResponse(fullText);
       for (const chunk of chunks) {
-        await thread.post(chunk);
+        await say({ text: chunk, thread_ts: threadTs });
       }
 
       // Replace eyes with checkmark on success
-      await markSuccess(adapter, thread.id, message.id);
+      await markSuccess(client, channel, messageTs);
     } catch (error) {
       // Replace eyes with error indicator on failure
-      await markError(adapter, thread.id, message.id);
+      await markError(client, channel, messageTs);
 
       const errorMessage =
         error instanceof Error ? error.message : "An unexpected error occurred";
-      await thread.post(`Error: ${errorMessage}`);
+      await say({ text: `Error: ${errorMessage}`, thread_ts: threadTs });
     }
   };
 }

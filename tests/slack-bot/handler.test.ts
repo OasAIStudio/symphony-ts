@@ -13,6 +13,7 @@ import { streamText } from "ai";
 import { claudeCode } from "ai-sdk-provider-claude-code";
 
 import {
+  type BoltMessageArgs,
   createMessageHandler,
   splitAtParagraphs,
 } from "../../src/slack-bot/handler.js";
@@ -22,37 +23,63 @@ import type {
   SessionMap,
 } from "../../src/slack-bot/types.js";
 
-// Helper to create a mock thread
-function createMockThread(channelId: string) {
-  return {
-    id: `slack:${channelId}:1234.5678`,
-    channelId,
-    adapter: {
-      addReaction: vi.fn().mockResolvedValue(undefined),
-      removeReaction: vi.fn().mockResolvedValue(undefined),
-    },
-    post: vi.fn().mockResolvedValue({ id: "sent-msg-1" }),
+/** Create a mock Bolt message args object. */
+function createMockBoltArgs(
+  channelId: string,
+  text: string,
+  overrides?: Partial<{
+    ts: string;
+    thread_ts: string;
+    bot_id: string;
+    subtype: string;
+  }>,
+): {
+  args: BoltMessageArgs;
+  say: ReturnType<typeof vi.fn>;
+  client: {
+    reactions: {
+      add: ReturnType<typeof vi.fn>;
+      remove: ReturnType<typeof vi.fn>;
+    };
   };
-}
+} {
+  const say = vi.fn().mockResolvedValue(undefined);
+  const client = {
+    reactions: {
+      add: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+    },
+  };
 
-// Helper to create a mock message
-function createMockMessage(text: string) {
-  return {
-    id: "msg-ts-1234",
+  const message: Record<string, unknown> = {
+    type: "message" as const,
     text,
-    threadId: "slack:C123:1234.5678",
-    author: {
-      userId: "U999",
-      userName: "testuser",
-      fullName: "Test User",
-      isBot: false,
-      isMe: false,
-    },
-    metadata: { dateSent: new Date(), edited: false },
-    attachments: [],
-    formatted: { type: "root" as const, children: [] },
-    raw: {},
+    ts: overrides?.ts ?? "1234.5678",
+    channel: channelId,
   };
+  if (overrides?.thread_ts) {
+    message.thread_ts = overrides.thread_ts;
+  }
+  if (overrides?.bot_id) {
+    message.bot_id = overrides.bot_id;
+  }
+  if (overrides?.subtype) {
+    message.subtype = overrides.subtype;
+  }
+
+  const args = {
+    message,
+    say,
+    client,
+    context: {},
+    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    next: vi.fn(),
+    event: message,
+    payload: message,
+    body: { event: message },
+  } as unknown as BoltMessageArgs;
+
+  return { args, say, client };
 }
 
 // Helper to create an async iterable from strings
@@ -100,13 +127,11 @@ describe("createMessageHandler", () => {
       model: "sonnet",
     });
 
-    const thread = createMockThread("C123");
-    const message = createMockMessage("What files are in this project?");
-
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
+    const { args } = createMockBoltArgs(
+      "C123",
+      "What files are in this project?",
     );
+    await handler(args);
 
     // Verify claudeCode was called with correct cwd and permissionMode
     expect(claudeCode).toHaveBeenCalledWith("sonnet", {
@@ -121,7 +146,7 @@ describe("createMessageHandler", () => {
     });
   });
 
-  it("posts response as a thread reply via thread.post", async () => {
+  it("posts response as a threaded reply via say()", async () => {
     const channelMap: ChannelProjectMap = new Map([
       ["C123", "/tmp/test-project"],
     ]);
@@ -138,16 +163,14 @@ describe("createMessageHandler", () => {
 
     const handler = createMessageHandler({ channelMap, sessions, ccSessions });
 
-    const thread = createMockThread("C123");
-    const message = createMockMessage("What files?");
-
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
+    const { args, say } = createMockBoltArgs("C123", "What files?");
+    await handler(args);
 
     // Verify response was posted as a thread reply
-    expect(thread.post).toHaveBeenCalledWith("Here are the files");
+    expect(say).toHaveBeenCalledWith({
+      text: "Here are the files",
+      thread_ts: "1234.5678",
+    });
   });
 
   it("splits multi-paragraph responses into separate thread posts when they exceed chunk limit", async () => {
@@ -171,19 +194,15 @@ describe("createMessageHandler", () => {
 
     const handler = createMessageHandler({ channelMap, sessions, ccSessions });
 
-    const thread = createMockThread("C123");
-    const message = createMockMessage("Tell me about files");
-
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
+    const { args, say } = createMockBoltArgs("C123", "Tell me about files");
+    await handler(args);
 
     // Small paragraphs are combined into a single chunk (under 39K limit)
-    expect(thread.post).toHaveBeenCalledTimes(1);
-    expect(thread.post).toHaveBeenCalledWith(
-      "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.",
-    );
+    expect(say).toHaveBeenCalledTimes(1);
+    expect(say).toHaveBeenCalledWith({
+      text: "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.",
+      thread_ts: "1234.5678",
+    });
   });
 
   it("uses bypassPermissions for all CC invocations", async () => {
@@ -200,13 +219,8 @@ describe("createMessageHandler", () => {
     vi.mocked(streamText).mockReturnValue(createMockStreamResult(["OK"]));
 
     const handler = createMessageHandler({ channelMap, sessions, ccSessions });
-    const thread = createMockThread("C123");
-    const message = createMockMessage("test");
-
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
+    const { args } = createMockBoltArgs("C123", "test");
+    await handler(args);
 
     expect(claudeCode).toHaveBeenCalledWith(
       expect.any(String),
@@ -220,27 +234,20 @@ describe("createMessageHandler", () => {
     const ccSessions = createCcSessionStore();
 
     const handler = createMessageHandler({ channelMap, sessions, ccSessions });
-    const thread = createMockThread("C999");
-    const message = createMockMessage("hello");
+    const { args, say, client } = createMockBoltArgs("C999", "hello");
+    await handler(args);
 
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
-
-    expect(thread.post).toHaveBeenCalledWith(
-      expect.stringContaining("No project directory mapped"),
+    expect(say).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("No project directory mapped"),
+      }),
     );
     // Should still remove eyes and add warning
-    expect(thread.adapter.removeReaction).toHaveBeenCalledWith(
-      thread.id,
-      message.id,
-      "eyes",
+    expect(client.reactions.remove).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "eyes" }),
     );
-    expect(thread.adapter.addReaction).toHaveBeenCalledWith(
-      thread.id,
-      message.id,
-      "warning",
+    expect(client.reactions.add).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "warning" }),
     );
   });
 
@@ -273,26 +280,21 @@ describe("createMessageHandler", () => {
     } as unknown as ReturnType<typeof streamText>);
 
     const handler = createMessageHandler({ channelMap, sessions, ccSessions });
-    const thread = createMockThread("C123");
-    const message = createMockMessage("test");
-
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
+    const { args, say, client } = createMockBoltArgs("C123", "test");
+    await handler(args);
 
     // Should post error message
-    expect(thread.post).toHaveBeenCalledWith("Error: Claude Code failed");
-    // Should replace eyes with x
-    expect(thread.adapter.removeReaction).toHaveBeenCalledWith(
-      thread.id,
-      message.id,
-      "eyes",
+    expect(say).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Error: Claude Code failed",
+      }),
     );
-    expect(thread.adapter.addReaction).toHaveBeenCalledWith(
-      thread.id,
-      message.id,
-      "x",
+    // Should replace eyes with x
+    expect(client.reactions.remove).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "eyes" }),
+    );
+    expect(client.reactions.add).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "x" }),
     );
   });
 
@@ -310,18 +312,62 @@ describe("createMessageHandler", () => {
     vi.mocked(streamText).mockReturnValue(createMockStreamResult(["OK"]));
 
     const handler = createMessageHandler({ channelMap, sessions, ccSessions });
-    const thread = createMockThread("C123");
-    const message = createMockMessage("test");
+    const { args } = createMockBoltArgs("C123", "test");
+    await handler(args);
 
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
-
-    const session = sessions.get(thread.id);
+    // Thread ID = message.thread_ts || message.ts = "1234.5678"
+    const session = sessions.get("1234.5678");
     expect(session).toBeDefined();
     expect(session?.channelId).toBe("C123");
     expect(session?.projectDir).toBe("/tmp/test-project");
+  });
+
+  it("skips messages with bot_id", async () => {
+    const channelMap: ChannelProjectMap = new Map([
+      ["C123", "/tmp/test-project"],
+    ]);
+    const sessions: SessionMap = new Map();
+    const ccSessions = createCcSessionStore();
+
+    const handler = createMessageHandler({ channelMap, sessions, ccSessions });
+    const { args, say } = createMockBoltArgs("C123", "bot message", {
+      bot_id: "B123",
+    });
+    await handler(args);
+
+    expect(say).not.toHaveBeenCalled();
+  });
+
+  it("skips messages with subtype message_changed", async () => {
+    const channelMap: ChannelProjectMap = new Map([
+      ["C123", "/tmp/test-project"],
+    ]);
+    const sessions: SessionMap = new Map();
+    const ccSessions = createCcSessionStore();
+
+    const handler = createMessageHandler({ channelMap, sessions, ccSessions });
+    const { args, say } = createMockBoltArgs("C123", "edited", {
+      subtype: "message_changed",
+    });
+    await handler(args);
+
+    expect(say).not.toHaveBeenCalled();
+  });
+
+  it("skips messages with subtype message_deleted", async () => {
+    const channelMap: ChannelProjectMap = new Map([
+      ["C123", "/tmp/test-project"],
+    ]);
+    const sessions: SessionMap = new Map();
+    const ccSessions = createCcSessionStore();
+
+    const handler = createMessageHandler({ channelMap, sessions, ccSessions });
+    const { args, say } = createMockBoltArgs("C123", "", {
+      subtype: "message_deleted",
+    });
+    await handler(args);
+
+    expect(say).not.toHaveBeenCalled();
   });
 });
 

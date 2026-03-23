@@ -12,41 +12,53 @@ vi.mock("ai-sdk-provider-claude-code", () => ({
 import { streamText } from "ai";
 import { claudeCode } from "ai-sdk-provider-claude-code";
 
+import type { BoltMessageArgs } from "../src/slack-bot/handler.js";
 import { createMessageHandler } from "../src/slack-bot/handler.js";
 import { createCcSessionStore } from "../src/slack-bot/session-store.js";
 import type { ChannelProjectMap, SessionMap } from "../src/slack-bot/types.js";
 
-// Helper to create a mock thread
-function createMockThread(channelId: string) {
-  return {
-    id: `slack:${channelId}:1234.5678`,
-    channelId,
-    adapter: {
-      addReaction: vi.fn().mockResolvedValue(undefined),
-      removeReaction: vi.fn().mockResolvedValue(undefined),
-    },
-    post: vi.fn().mockResolvedValue({ id: "sent-msg-1" }),
+/** Create a mock Bolt message args object. */
+function createMockBoltArgs(
+  channelId: string,
+  text: string,
+): {
+  args: BoltMessageArgs;
+  say: ReturnType<typeof vi.fn>;
+  client: {
+    reactions: {
+      add: ReturnType<typeof vi.fn>;
+      remove: ReturnType<typeof vi.fn>;
+    };
   };
-}
+} {
+  const say = vi.fn().mockResolvedValue(undefined);
+  const client = {
+    reactions: {
+      add: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+    },
+  };
 
-// Helper to create a mock message
-function createMockMessage(text: string) {
-  return {
-    id: "msg-ts-1234",
+  const message = {
+    type: "message" as const,
     text,
-    threadId: "slack:C123:1234.5678",
-    author: {
-      userId: "U999",
-      userName: "testuser",
-      fullName: "Test User",
-      isBot: false,
-      isMe: false,
-    },
-    metadata: { dateSent: new Date(), edited: false },
-    attachments: [],
-    formatted: { type: "root" as const, children: [] },
-    raw: {},
+    ts: "1234.5678",
+    channel: channelId,
   };
+
+  const args = {
+    message,
+    say,
+    client,
+    context: {},
+    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    next: vi.fn(),
+    event: message,
+    payload: message,
+    body: { event: message },
+  } as unknown as BoltMessageArgs;
+
+  return { args, say, client };
 }
 
 describe("Error handling", () => {
@@ -83,16 +95,13 @@ describe("Error handling", () => {
     } as unknown as ReturnType<typeof streamText>);
 
     const handler = createMessageHandler({ channelMap, sessions, ccSessions });
-    const thread = createMockThread("C123");
-    const message = createMockMessage("test query");
-
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
+    const { args, say } = createMockBoltArgs("C123", "test query");
+    await handler(args);
 
     // Should post a user-friendly error message
-    expect(thread.post).toHaveBeenCalledWith("Error: Rate limit exceeded");
+    expect(say).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Error: Rate limit exceeded" }),
+    );
   });
 
   it("adds an x reaction instead of checkmark on error", async () => {
@@ -123,32 +132,24 @@ describe("Error handling", () => {
     } as unknown as ReturnType<typeof streamText>);
 
     const handler = createMessageHandler({ channelMap, sessions, ccSessions });
-    const thread = createMockThread("C123");
-    const message = createMockMessage("test");
-
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
+    const { args, client } = createMockBoltArgs("C123", "test");
+    await handler(args);
 
     // Verify reactions.remove('eyes') was called
-    expect(thread.adapter.removeReaction).toHaveBeenCalledWith(
-      thread.id,
-      message.id,
-      "eyes",
+    expect(client.reactions.remove).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "eyes" }),
     );
 
     // Verify reactions.add('x') was called
-    expect(thread.adapter.addReaction).toHaveBeenCalledWith(
-      thread.id,
-      message.id,
-      "x",
+    expect(client.reactions.add).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "x" }),
     );
 
     // Verify white_check_mark was NOT added
-    const addCalls = thread.adapter.addReaction.mock.calls;
+    const addCalls = client.reactions.add.mock.calls;
     const checkmarkCalls = addCalls.filter(
-      (call: unknown[]) => call[2] === "white_check_mark",
+      (call: unknown[]) =>
+        (call[0] as Record<string, unknown>)?.name === "white_check_mark",
     );
     expect(checkmarkCalls).toHaveLength(0);
   });
@@ -181,24 +182,19 @@ describe("Error handling", () => {
     } as unknown as ReturnType<typeof streamText>);
 
     const handler = createMessageHandler({ channelMap, sessions, ccSessions });
-    const thread = createMockThread("C123");
-    const message = createMockMessage("test");
-
-    await handler(
-      thread as unknown as Parameters<typeof handler>[0],
-      message as unknown as Parameters<typeof handler>[1],
-    );
+    const { args, say, client } = createMockBoltArgs("C123", "test");
+    await handler(args);
 
     // Should post generic error message for non-Error values
-    expect(thread.post).toHaveBeenCalledWith(
-      "Error: An unexpected error occurred",
+    expect(say).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Error: An unexpected error occurred",
+      }),
     );
 
     // Should still add x reaction
-    expect(thread.adapter.addReaction).toHaveBeenCalledWith(
-      thread.id,
-      message.id,
-      "x",
+    expect(client.reactions.add).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "x" }),
     );
   });
 });

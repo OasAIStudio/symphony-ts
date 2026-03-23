@@ -1,12 +1,10 @@
 /**
  * Slack bot entry point.
  *
- * Configures a Chat instance with SlackAdapter and MemoryStateAdapter,
- * registers message handlers, and exports the webhook handler.
+ * Configures a Bolt App with Socket Mode,
+ * registers message handlers, and exports the app.
  */
-import { createSlackAdapter } from "@chat-adapter/slack";
-import { createMemoryState } from "@chat-adapter/state-memory";
-import { type Adapter, Chat } from "chat";
+import { App } from "@slack/bolt";
 
 import { createMessageHandler } from "./handler.js";
 import { createCcSessionStore } from "./session-store.js";
@@ -60,19 +58,17 @@ const sessions: SessionMap = new Map();
 const ccSessions = createCcSessionStore();
 
 /**
- * Create and configure a Chat instance for the Slack bot.
+ * Create and configure a Bolt App for the Slack bot using Socket Mode.
  *
- * Returns the Chat instance and its type-safe webhook handler.
+ * Returns the App instance and associated session stores.
  */
-export function createSlackBot(config: SlackBotConfig) {
-  const { botToken, signingSecret, channelMap, model } = config;
+export function createSlackBoltApp(config: SlackBotConfig) {
+  const { botToken, appToken, channelMap, model } = config;
 
-  const chat = new Chat({
-    userName: "symphony-bot",
-    adapters: {
-      slack: createSlackAdapter({ botToken, signingSecret }) as Adapter,
-    },
-    state: createMemoryState(),
+  const app = new App({
+    token: botToken,
+    appToken,
+    socketMode: true,
   });
 
   const handler = createMessageHandler({
@@ -83,15 +79,35 @@ export function createSlackBot(config: SlackBotConfig) {
   });
 
   // Match ALL messages — no @mention required per spec
-  chat.onNewMessage(/.*/, handler);
+  app.message(handler);
 
   return {
-    chat,
-    /** Webhook handler for Slack events — pass incoming HTTP requests here. */
-    webhooks: chat.webhooks,
+    app,
     /** The in-memory session store (exposed for testing / monitoring). */
     sessions,
     /** The in-memory CC session store (exposed for testing / monitoring). */
     ccSessions,
   };
+}
+
+/**
+ * Start the Slack bot using Socket Mode.
+ *
+ * Creates the Bolt app, registers handlers, and connects via WebSocket.
+ */
+export async function startSlackBot(config: SlackBotConfig): Promise<{
+  app: App;
+  sessions: SessionMap;
+  ccSessions: ReturnType<typeof createCcSessionStore>;
+}> {
+  const result = createSlackBoltApp(config);
+
+  await result.app.start();
+
+  const channelCount = config.channelMap.size;
+  console.log(
+    `Slack bot connected via Socket Mode (${channelCount} channel mapping${channelCount === 1 ? "" : "s"})`,
+  );
+
+  return result;
 }
