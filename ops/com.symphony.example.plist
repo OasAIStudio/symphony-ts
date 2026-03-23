@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  REFERENCE ONLY — this file is not used directly.
+  symphony-ctl install generates the actual plist from .env + WORKFLOW.md.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.symphony.example</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/node</string>
+        <string>/path/to/symphony-ts/dist/src/cli/main.js</string>
+        <string>/path/to/symphony-ts/WORKFLOW.md</string>
+        <string>--acknowledge-high-trust-preview</string>
+        <string>--logs-root</string>
+        <string>~/Library/Logs/symphony/example/</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/path/to/symphony-ts</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/youruser</string>
+        <key>NODE_ENV</key>
+        <string>production</string>
+        <key>LINEAR_API_KEY</key>
+        <string>lin_api_xxxxx</string>
+        <key>LINEAR_PROJECT_SLUG</key>
+        <string>your-project-slug</string>
+        <key>REPO_URL</key>
+        <string>https://github.com/org/repo.git</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>~/Library/Logs/symphony/example/stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>~/Library/Logs/symphony/example/stderr.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

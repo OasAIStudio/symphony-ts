@@ -99,3 +99,120 @@ export const LINEAR_ISSUE_STATES_BY_IDS_QUERY = `
     }
   }
 `.trim();
+
+export const LINEAR_WORKFLOW_STATES_QUERY = `
+  query SymphonyWorkflowStates($teamId: String!) {
+    workflowStates(filter: { team: { key: { eq: $teamId } } }) {
+      nodes {
+        id
+        name
+      }
+    }
+  }
+`.trim();
+
+export const LINEAR_ISSUE_UPDATE_MUTATION = `
+  mutation SymphonyIssueUpdate($issueId: String!, $stateId: String!) {
+    issueUpdate(id: $issueId, input: { stateId: $stateId }) {
+      success
+      issue {
+        id
+        state {
+          name
+        }
+      }
+    }
+  }
+`.trim();
+
+export const LINEAR_CREATE_COMMENT_MUTATION = `
+  mutation SymphonyCreateComment($issueId: String!, $body: String!) {
+    commentCreate(input: { issueId: $issueId, body: $body }) {
+      success
+      comment {
+        id
+      }
+    }
+  }
+`.trim();
+
+export const LINEAR_ISSUES_BY_LABELS_QUERY = `
+  query SymphonyIssuesByLabels(
+    $projectSlug: String!
+    $labelNames: [String!]!
+    $first: Int!
+    $relationFirst: Int!
+    $after: String
+  ) {
+    issues(
+      first: $first
+      after: $after
+      filter: {
+        project: { slugId: { eq: $projectSlug } }
+        labels: { name: { in: $labelNames } }
+      }
+      orderBy: createdAt
+    ) {
+      nodes {
+        ${ISSUE_FIELDS}
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`.trim();
+
+export const LINEAR_ISSUE_PARENT_AND_SIBLINGS_QUERY = `
+  query SymphonyIssueParentAndSiblings($issueId: String!) {
+    issue(id: $issueId) {
+      id
+      identifier
+      parent {
+        id
+        identifier
+        state {
+          name
+        }
+        children {
+          nodes {
+            id
+            identifier
+            state {
+              name
+            }
+          }
+        }
+      }
+    }
+  }
+`.trim();
+
+export const LINEAR_OPEN_ISSUES_BY_LABELS_QUERY = `
+  query SymphonyOpenIssuesByLabels(
+    $projectSlug: String!
+    $labelNames: [String!]!
+    $excludeStateNames: [String!]!
+    $first: Int!
+    $relationFirst: Int!
+  ) {
+    issues(
+      first: $first
+      filter: {
+        project: { slugId: { eq: $projectSlug } }
+        labels: { name: { in: $labelNames } }
+        state: { name: { nin: $excludeStateNames } }
+      }
+      orderBy: createdAt
+    ) {
+      nodes {
+        ${ISSUE_FIELDS}
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`.trim();

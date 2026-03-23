@@ -1,0 +1,1115 @@
+#!/usr/bin/env bash
+# freeze-and-queue.sh — Creates parent + sub-issue hierarchy in Linear from a spec
+# Decision 32: Linear as spec store — specs live as Linear issues, not filesystem files.
+#
+# Usage:
+#   bash freeze-and-queue.sh [--dry-run] [--parent-only] [--update ISSUE_ID] <workflow-path> [spec-file]
+#   cat spec.md | bash freeze-and-queue.sh [--dry-run] [--parent-only] <workflow-path>
+#   bash freeze-and-queue.sh --trivial "Issue title" <workflow-path>
+#   echo "description" | bash freeze-and-queue.sh --trivial "Issue title" <workflow-path>
+#
+# The WORKFLOW file provides: project_slug (from YAML frontmatter)
+# Auth: Uses linear-cli's configured auth (OAuth or --api-key).
+# Team ID is resolved from the project via the Linear API.
+
+set -euo pipefail
+
+# ── Parse flags ──────────────────────────────────────────────────────────────
+
+DRY_RUN=false
+UPDATE_ISSUE_ID=""
+PARENT_ONLY=false
+TRIVIAL=false
+TRIVIAL_TITLE=""
+POSITIONAL=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)      DRY_RUN=true; shift ;;
+    --update)       shift; UPDATE_ISSUE_ID="${1:-}"; shift ;;
+    --parent-only)  PARENT_ONLY=true; shift ;;
+    --trivial)      TRIVIAL=true; shift; TRIVIAL_TITLE="${1:-}"; shift ;;
+    *)              POSITIONAL+=("$1"); shift ;;
+  esac
+done
+
+WORKFLOW_PATH="${POSITIONAL[0]:-}"
+SPEC_FILE="${POSITIONAL[1]:-}"
+
+if [[ -z "$WORKFLOW_PATH" ]]; then
+  echo "Usage: freeze-and-queue.sh [--dry-run] [--parent-only] [--update ISSUE_ID] [--trivial TITLE] <workflow-path> [spec-file]" >&2
+  echo "  --trivial TITLE  Create a single issue in Todo state (no spec, no parent/sub-issue hierarchy)" >&2
+  echo "  If no spec-file is given, reads spec content from stdin." >&2
+  exit 1
+fi
+
+if [[ ! -f "$WORKFLOW_PATH" ]]; then
+  echo "ERROR: WORKFLOW file not found: $WORKFLOW_PATH" >&2
+  exit 1
+fi
+
+# ── Linear CLI helpers ───────────────────────────────────────────────────────
+# All Linear operations use linear-cli, which handles auth (OAuth or API key).
+# Pass --api-key via LINEAR_API_KEY env var if needed (linear-cli reads it).
+
+LINEAR_CLI="linear-cli"
+
+# ── Resolve team from project ────────────────────────────────────────────────
+
+resolve_team_from_project() {
+  # Single GraphQL query to resolve both project ID and team info from slugId
+  local project_json
+  project_json=$($LINEAR_CLI api query -o json --quiet --compact \
+    -v "slug=$PROJECT_SLUG" \
+    'query($slug: String!) { projects(filter: { slugId: { eq: $slug } }) { nodes { id teams { nodes { id key } } } } }' 2>/dev/null)
+
+  PROJECT_ID=$(echo "$project_json" | jq -r '.data.projects.nodes[0].id // empty')
+  if [[ -z "$PROJECT_ID" ]]; then
+    echo "ERROR: Could not find project with slugId: $PROJECT_SLUG" >&2
+    echo "  Ensure the project exists and linear-cli is authenticated." >&2
+    exit 1
+  fi
+  echo "Project ID: $PROJECT_ID"
+
+  TEAM_ID=$(echo "$project_json" | jq -r '.data.projects.nodes[0].teams.nodes[0].id // empty')
+  TEAM_KEY=$(echo "$project_json" | jq -r '.data.projects.nodes[0].teams.nodes[0].key // empty')
+
+  if [[ -z "$TEAM_ID" ]]; then
+    echo "ERROR: Could not resolve team from project: $PROJECT_ID" >&2
+    echo "  API response: $project_json" >&2
+    exit 1
+  fi
+  echo "Resolved team: $TEAM_KEY (ID: $TEAM_ID)"
+}
+
+# ── Resolve workflow state IDs for the team ──────────────────────────────────
+# Globals populated by resolve_all_states():
+DRAFT_STATE_ID=""
+TODO_STATE_ID=""
+BACKLOG_STATE_ID=""
+
+resolve_all_states() {
+  # Single workflowStates GraphQL query to batch-resolve all needed state IDs
+  local states_json
+  states_json=$($LINEAR_CLI api query -o json --quiet --compact \
+    -v "teamId=$TEAM_ID" \
+    'query($teamId: String!) { workflowStates(filter: { team: { id: { eq: $teamId } } }) { nodes { id name } } }' 2>/dev/null)
+
+  DRAFT_STATE_ID=$(echo "$states_json" | jq -r '.data.workflowStates.nodes[] | select(.name == "Draft") | .id' | head -1)
+  TODO_STATE_ID=$(echo "$states_json" | jq -r '.data.workflowStates.nodes[] | select(.name == "Todo") | .id' | head -1)
+  BACKLOG_STATE_ID=$(echo "$states_json" | jq -r '.data.workflowStates.nodes[] | select(.name == "Backlog") | .id' | head -1)
+}
+
+# ── Helper: create a blockedBy relation via GraphQL mutation ──────────────────
+# linear-cli relations add is broken (claims success but relations don't persist).
+# Uses issueRelationCreate mutation via temp file to avoid shell escaping issues
+# with String! types that linear-cli api query auto-escapes.
+# Args: $1=blocker_uuid $2=blocked_uuid $3=blocker_ident $4=blocked_ident $5=reason
+create_blocks_relation() {
+  local blocker_uuid="$1" blocked_uuid="$2"
+  local blocker_ident="$3" blocked_ident="$4" reason="$5"
+
+  # issueId=BLOCKER, relatedIssueId=BLOCKED, type=blocks
+  # means: issueId blocks relatedIssueId
+  local gql_tmpfile
+  gql_tmpfile=$(mktemp)
+  cat > "$gql_tmpfile" <<'GQLEOF'
+mutation($issueId: String!, $relatedIssueId: String!) { issueRelationCreate(input: { issueId: $issueId, relatedIssueId: $relatedIssueId, type: blocks }) { issueRelation { id } } }
+GQLEOF
+
+  local result
+  if result=$($LINEAR_CLI api query -o json --quiet --compact \
+    -v "issueId=$blocker_uuid" \
+    -v "relatedIssueId=$blocked_uuid" \
+    - < "$gql_tmpfile" 2>&1); then
+    local rel_id
+    rel_id=$(echo "$result" | jq -r '.data.issueRelationCreate.issueRelation.id // empty')
+    if [[ -n "$rel_id" ]]; then
+      echo "  $blocked_ident blocked by $blocker_ident ($reason)"
+      rm -f "$gql_tmpfile"
+      return 0
+    fi
+  fi
+  echo "  WARNING: Failed to create relation $blocker_ident blocks $blocked_ident" >&2
+  echo "  Response: ${result:-<empty>}" >&2
+  rm -f "$gql_tmpfile"
+  return 1
+}
+
+# ── Post-creation verification ────────────────────────────────────────────────
+# Queries an issue by ID and confirms project.slugId and (for sub-issues) parent.id
+# match expected values. Logs warnings on mismatch; never exits.
+# Args: $1=issue_uuid, $2=expected_project_slug, $3=expected_parent_id (optional)
+verify_issue_creation() {
+  local issue_uuid="$1"
+  local expected_slug="$2"
+  local expected_parent_id="${3:-}"
+
+  # Skip verification in dry-run mode (no API calls)
+  if [[ "$DRY_RUN" == true ]]; then
+    return 0
+  fi
+
+  local verify_result
+  verify_result=$($LINEAR_CLI api query -o json --quiet --compact \
+    -v "issueId=$issue_uuid" \
+    'query($issueId: String!) { issue(id: $issueId) { project { slugId } parent { id } } }' 2>/dev/null) || true
+
+  local actual_slug
+  actual_slug=$(echo "$verify_result" | jq -r '.data.issue.project.slugId // empty')
+  if [[ -n "$actual_slug" && "$actual_slug" != "$expected_slug" ]]; then
+    echo "WARNING: project mismatch on $issue_uuid — expected slugId=$expected_slug, got $actual_slug" >&2
+  elif [[ -z "$actual_slug" ]]; then
+    echo "WARNING: VERIFY FAIL — could not confirm project.slugId for $issue_uuid" >&2
+  fi
+
+  if [[ -n "$expected_parent_id" ]]; then
+    local actual_parent
+    actual_parent=$(echo "$verify_result" | jq -r '.data.issue.parent.id // empty')
+    if [[ -n "$actual_parent" && "$actual_parent" != "$expected_parent_id" ]]; then
+      echo "WARNING: parent mismatch on $issue_uuid — expected parent=$expected_parent_id, got $actual_parent" >&2
+    elif [[ -z "$actual_parent" ]]; then
+      echo "WARNING: VERIFY FAIL — could not confirm parent.id for $issue_uuid" >&2
+    fi
+  fi
+}
+
+# ── Post-creation verification (parent only, no project check) ─────────────
+# Queries an issue by ID and confirms parent.id matches expected value.
+# Used for sub-issues where projectId is deferred until after relation verification.
+# Args: $1=issue_uuid, $2=expected_parent_id
+verify_issue_creation_parent_only() {
+  local issue_uuid="$1"
+  local expected_parent_id="$2"
+
+  # Skip verification in dry-run mode (no API calls)
+  if [[ "$DRY_RUN" == true ]]; then
+    return 0
+  fi
+
+  local verify_result
+  verify_result=$($LINEAR_CLI api query -o json --quiet --compact \
+    -v "issueId=$issue_uuid" \
+    'query($issueId: String!) { issue(id: $issueId) { parent { id } } }' 2>/dev/null) || true
+
+  local actual_parent
+  actual_parent=$(echo "$verify_result" | jq -r '.data.issue.parent.id // empty')
+  if [[ -n "$actual_parent" && "$actual_parent" != "$expected_parent_id" ]]; then
+    echo "WARNING: parent mismatch on $issue_uuid — expected parent=$expected_parent_id, got $actual_parent" >&2
+  elif [[ -z "$actual_parent" ]]; then
+    echo "WARNING: VERIFY FAIL — could not confirm parent.id for $issue_uuid" >&2
+  fi
+}
+
+# ── Verify blocking relations on sub-issues ──────────────────────────────────
+# Queries each sub-issue's inverseRelations and confirms the correct blocker
+# identity and direction (type=blocks). Returns non-zero on failure.
+# Globals: SUB_ISSUE_IDS[], SUB_ISSUE_IDENTIFIERS[], SORTED_INDICES[], TOTAL
+verify_blocking_relations() {
+  local all_ok=true
+
+  for ((k=1; k<TOTAL; k++)); do
+    local curr_idx="${SORTED_INDICES[$k]}"
+    local prev_idx="${SORTED_INDICES[$((k-1))]}"
+    local curr_id="${SUB_ISSUE_IDS[$curr_idx]:-}"
+    local prev_id="${SUB_ISSUE_IDS[$prev_idx]:-}"
+    local curr_ident="${SUB_ISSUE_IDENTIFIERS[$curr_idx]:-}"
+    local prev_ident="${SUB_ISSUE_IDENTIFIERS[$prev_idx]:-}"
+
+    if [[ -z "$curr_id" || -z "$prev_id" ]]; then
+      echo "WARNING: Skipping relation check — missing sub-issue ID for index $k" >&2
+      all_ok=false
+      continue
+    fi
+
+    local rel_result
+    rel_result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "issueId=$curr_id" \
+      'query($issueId: String!) { issue(id: $issueId) { inverseRelations { nodes { type relatedIssue { id } } } } }' 2>/dev/null) || true
+
+    # Check that there is a blocks-type inverseRelation from the predecessor
+    local found
+    found=$(echo "$rel_result" | jq -r --arg pred "$prev_id" \
+      '.data.issue.inverseRelations.nodes[] | select(.type == "blocks" and .relatedIssue.id == $pred) | .type' 2>/dev/null | head -1)
+
+    if [[ "$found" != "blocks" ]]; then
+      echo "ERROR: $curr_ident missing expected blocks relation from $prev_ident" >&2
+      all_ok=false
+    else
+      echo "  ✓ $curr_ident blocked by $prev_ident (verified)"
+    fi
+  done
+
+  if [[ "$all_ok" != true ]]; then
+    return 1
+  fi
+  return 0
+}
+
+# ── Batch project assignment via issueUpdate ──────────────────────────────────
+# Assigns projectId to all sub-issues after blocking relations are verified.
+# Globals: SUB_ISSUE_IDS[], SUB_ISSUE_IDENTIFIERS[], SORTED_INDICES[], TOTAL
+assign_project_to_sub_issues() {
+  echo ""
+  echo "Assigning project to sub-issues (deferred)..."
+  local gql_tmpfile
+  for ((k=0; k<TOTAL; k++)); do
+    local idx="${SORTED_INDICES[$k]}"
+    local sub_id="${SUB_ISSUE_IDS[$idx]:-}"
+    local sub_ident="${SUB_ISSUE_IDENTIFIERS[$idx]:-}"
+
+    if [[ -z "$sub_id" ]]; then
+      echo "  Skipping index $idx — no sub-issue ID" >&2
+      continue
+    fi
+
+    gql_tmpfile=$(mktemp)
+    cat > "$gql_tmpfile" <<GQLEOF
+mutation { issueUpdate(id: "${sub_id}", input: { projectId: "${PROJECT_ID}" }) { success issue { id identifier } } }
+GQLEOF
+
+    local result
+    result=$($LINEAR_CLI api query -o json --quiet --compact - < "$gql_tmpfile" 2>&1)
+    rm -f "$gql_tmpfile"
+
+    local success
+    success=$(echo "$result" | jq -r '.data.issueUpdate.success // false')
+    if [[ "$success" == "true" ]]; then
+      echo "  ✓ $sub_ident assigned to project (issueUpdate projectId)"
+    else
+      echo "  WARNING: Failed to assign project to $sub_ident" >&2
+      echo "  Response: $result" >&2
+    fi
+  done
+}
+
+# ── Trivial mode: single issue in Todo, no spec ─────────────────────────────
+
+if [[ "$TRIVIAL" == true ]]; then
+  # TRIVIAL mode: creates single issue with projectId at creation time (unchanged)
+  if [[ -z "$TRIVIAL_TITLE" ]]; then
+    echo "ERROR: --trivial requires a title argument." >&2
+    echo "  Usage: freeze-and-queue.sh --trivial 'Fix the typo in README' <workflow-path>" >&2
+    exit 1
+  fi
+
+  # Read optional description from stdin or spec file
+  TRIVIAL_DESC=""
+  if [[ -n "$SPEC_FILE" && -f "$SPEC_FILE" ]]; then
+    TRIVIAL_DESC=$(cat "$SPEC_FILE")
+  elif [[ ! -t 0 ]]; then
+    TRIVIAL_DESC=$(cat)
+  fi
+
+  # Parse WORKFLOW for project_slug
+  FRONTMATTER=$(sed -n '/^---$/,/^---$/p' "$WORKFLOW_PATH" | sed '1d;$d')
+  PROJECT_SLUG=$(echo "$FRONTMATTER" | grep 'project_slug:' | head -1 | sed 's/.*project_slug:[[:space:]]*//' | tr -d '"'"'" | xargs)
+
+  if [[ -z "$PROJECT_SLUG" ]]; then
+    echo "ERROR: No project_slug found in WORKFLOW file: $WORKFLOW_PATH" >&2
+    exit 1
+  fi
+
+  echo "=== freeze-and-queue.sh (trivial) ==="
+  echo "Title: $TRIVIAL_TITLE"
+  echo "WORKFLOW: $WORKFLOW_PATH"
+  echo "Project slug: $PROJECT_SLUG"
+  echo "Dry run: $DRY_RUN"
+
+  if [[ "$DRY_RUN" == true ]]; then
+    echo ""
+    echo "--- TRIVIAL ISSUE ---"
+    echo "Title: $TRIVIAL_TITLE"
+    echo "State: Todo"
+    echo "Description: ${TRIVIAL_DESC:-(none)}"
+    echo ""
+    echo "=== Dry run complete: 1 trivial issue would be created ==="
+    exit 0
+  fi
+
+  # Resolve team from project
+  resolve_team_from_project
+
+  # Resolve all states in one batch query
+  resolve_all_states
+  TODO_STATE_NAME="Todo"
+  if [[ -z "$TODO_STATE_ID" ]]; then
+    echo "WARNING: 'Todo' state not found. Falling back to 'Backlog'..." >&2
+    TODO_STATE_ID="$BACKLOG_STATE_ID"
+    TODO_STATE_NAME="Backlog"
+  fi
+
+  # Create issue via GraphQL — includes projectId and stateId at creation time
+  TRIVIAL_GQL_TMPFILE=$(mktemp)
+  trap 'rm -f "$TRIVIAL_GQL_TMPFILE"' EXIT
+  if [[ -n "$TRIVIAL_DESC" ]]; then
+    cat > "$TRIVIAL_GQL_TMPFILE" <<'GQLEOF'
+mutation($title: String!, $description: String, $teamId: String!, $stateId: String!, $projectId: String!) {
+  issueCreate(input: {
+    teamId: $teamId
+    title: $title
+    description: $description
+    stateId: $stateId
+    projectId: $projectId
+  }) {
+    success
+    issue { id identifier url }
+  }
+}
+GQLEOF
+    result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "title=$TRIVIAL_TITLE" \
+      -v "description=$TRIVIAL_DESC" \
+      -v "teamId=$TEAM_ID" \
+      -v "stateId=$TODO_STATE_ID" \
+      -v "projectId=$PROJECT_ID" \
+      - < "$TRIVIAL_GQL_TMPFILE" 2>&1)
+  else
+    cat > "$TRIVIAL_GQL_TMPFILE" <<'GQLEOF'
+mutation($title: String!, $teamId: String!, $stateId: String!, $projectId: String!) {
+  issueCreate(input: {
+    teamId: $teamId
+    title: $title
+    stateId: $stateId
+    projectId: $projectId
+  }) {
+    success
+    issue { id identifier url }
+  }
+}
+GQLEOF
+    result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "title=$TRIVIAL_TITLE" \
+      -v "teamId=$TEAM_ID" \
+      -v "stateId=$TODO_STATE_ID" \
+      -v "projectId=$PROJECT_ID" \
+      - < "$TRIVIAL_GQL_TMPFILE" 2>&1)
+  fi
+  rm -f "$TRIVIAL_GQL_TMPFILE"
+
+  identifier=$(echo "$result" | jq -r '.data.issueCreate.issue.identifier // empty')
+  url=$(echo "$result" | jq -r '.data.issueCreate.issue.url // empty')
+  issue_id=$(echo "$result" | jq -r '.data.issueCreate.issue.id // empty')
+  success=$(echo "$result" | jq -r '.data.issueCreate.success // false')
+
+  if [[ "$success" == "true" && -n "$identifier" ]]; then
+    verify_issue_creation "$issue_id" "$PROJECT_SLUG"
+    echo ""
+    echo "=== Done (trivial) ==="
+    echo "Issue: $identifier ($url)"
+    echo "State: $TODO_STATE_NAME"
+    echo ""
+    echo "Symphony-ts will pick up this issue automatically when the pipeline runs."
+  else
+    echo "FAILED to create trivial issue" >&2
+    echo "Response: $result" >&2
+    exit 1
+  fi
+  exit 0
+fi
+
+# ── Read spec content ────────────────────────────────────────────────────────
+
+if [[ -n "$SPEC_FILE" ]]; then
+  if [[ ! -f "$SPEC_FILE" ]]; then
+    echo "ERROR: Spec file not found: $SPEC_FILE" >&2
+    exit 1
+  fi
+  SPEC_CONTENT=$(cat "$SPEC_FILE")
+elif [[ ! -t 0 ]]; then
+  SPEC_CONTENT=$(cat)
+else
+  echo "ERROR: No spec file provided and stdin is a terminal." >&2
+  echo "  Provide a spec file or pipe spec content to stdin." >&2
+  exit 1
+fi
+
+if [[ -z "$SPEC_CONTENT" ]]; then
+  echo "ERROR: Spec content is empty." >&2
+  exit 1
+fi
+
+# ── Parse WORKFLOW config ────────────────────────────────────────────────────
+
+# Extract YAML frontmatter between --- markers
+FRONTMATTER=$(sed -n '/^---$/,/^---$/p' "$WORKFLOW_PATH" | sed '1d;$d')
+
+# Extract project_slug from frontmatter
+PROJECT_SLUG=$(echo "$FRONTMATTER" | grep 'project_slug:' | head -1 | sed 's/.*project_slug:[[:space:]]*//' | tr -d '"'"'" | xargs)
+
+if [[ -z "$PROJECT_SLUG" ]]; then
+  echo "ERROR: No project_slug found in WORKFLOW file: $WORKFLOW_PATH" >&2
+  exit 1
+fi
+
+echo "=== freeze-and-queue.sh ==="
+echo "WORKFLOW: $WORKFLOW_PATH"
+echo "Project slug: $PROJECT_SLUG"
+echo "Dry run: $DRY_RUN"
+echo "Parent only: $PARENT_ONLY"
+[[ -n "$UPDATE_ISSUE_ID" ]] && echo "Update mode: $UPDATE_ISSUE_ID"
+
+# ── Parse tasks from spec content ────────────────────────────────────────────
+
+# Extract title from first # heading
+SPEC_TITLE=$(echo "$SPEC_CONTENT" | grep -m1 '^# ' | sed 's/^# //')
+if [[ -z "$SPEC_TITLE" ]]; then
+  SPEC_TITLE="Spec $(date +%Y-%m-%d)"
+fi
+
+# Parse ## Task N: headers and collect each task's content
+declare -a TASK_TITLES TASK_BODIES TASK_SCOPES
+task_idx=-1
+current_body=""
+current_scope=""
+
+while IFS= read -r line; do
+  if [[ "$line" =~ ^#{2,3}\ Task\ [0-9]+:\ (.+)$ ]] || [[ "$line" =~ ^#{2,3}\ Task\ [0-9]+\ -\ (.+)$ ]] || [[ "$line" =~ ^#{2,3}\ Task\ [0-9]+\.\ (.+)$ ]]; then
+    # Save previous task
+    if [[ $task_idx -ge 0 ]]; then
+      TASK_BODIES[$task_idx]="$current_body"
+      TASK_SCOPES[$task_idx]="$current_scope"
+    fi
+    ((task_idx++))
+    TASK_TITLES[$task_idx]="${BASH_REMATCH[1]}"
+    current_body=""
+    current_scope=""
+  elif [[ $task_idx -ge 0 ]]; then
+    # Accumulate body lines
+    current_body+="$line"$'\n'
+    # Extract scope from **Scope**: lines
+    if [[ "$line" =~ ^\*\*Scope\*\*:\ (.+)$ ]]; then
+      current_scope="${BASH_REMATCH[1]}"
+    fi
+  fi
+done <<< "$SPEC_CONTENT"
+
+# Save last task
+if [[ $task_idx -ge 0 ]]; then
+  TASK_BODIES[$task_idx]="$current_body"
+  TASK_SCOPES[$task_idx]="$current_scope"
+fi
+
+TOTAL=$((task_idx + 1))
+echo ""
+echo "Spec title: $SPEC_TITLE"
+echo "Found $TOTAL tasks"
+
+if [[ $TOTAL -eq 0 ]]; then
+  echo "WARNING: No tasks found. Expected ## Task N: headers in spec content." >&2
+  echo "Parent issue will be created without sub-issues." >&2
+fi
+
+# ── Detect file-path overlap for blockedBy relations ─────────────────────────
+
+detect_overlap() {
+  local scope_a="$1" scope_b="$2"
+  [[ -z "$scope_a" || -z "$scope_b" ]] && return 1
+  IFS=', ' read -ra files_a <<< "$scope_a"
+  IFS=', ' read -ra files_b <<< "$scope_b"
+  for fa in "${files_a[@]}"; do
+    for fb in "${files_b[@]}"; do
+      fa_clean=$(echo "$fa" | sed 's/`//g' | xargs)
+      fb_clean=$(echo "$fb" | sed 's/`//g' | xargs)
+      [[ -z "$fa_clean" || -z "$fb_clean" ]] && continue
+      if [[ "$fa_clean" == "$fb_clean" ]] || \
+         [[ "$fa_clean" == "$fb_clean"/* ]] || \
+         [[ "$fb_clean" == "$fa_clean"/* ]]; then
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# ── Parse task priorities for sequential ordering ────────────────────────────
+
+declare -a TASK_PRIORITIES
+for ((i=0; i<TOTAL; i++)); do
+  pri=$(echo "${TASK_BODIES[$i]}" | grep -oE '\*\*Priority\*\*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | head -1)
+  TASK_PRIORITIES[$i]="${pri:-$((i+1))}"
+done
+
+# Build priority-sorted index array (stable sort by priority, preserving task order for ties)
+SORTED_INDICES=()
+for ((i=0; i<TOTAL; i++)); do
+  SORTED_INDICES+=("$i")
+done
+
+# Bubble sort by priority (stable — preserves original order for equal priorities)
+for ((i=0; i<TOTAL; i++)); do
+  for ((j=0; j<TOTAL-i-1; j++)); do
+    idx_a="${SORTED_INDICES[$j]}"
+    idx_b="${SORTED_INDICES[$((j+1))]}"
+    if (( TASK_PRIORITIES[idx_a] > TASK_PRIORITIES[idx_b] )); then
+      SORTED_INDICES[$j]="$idx_b"
+      SORTED_INDICES[$((j+1))]="$idx_a"
+    fi
+  done
+done
+
+# ── Parse Scenarios section from parent spec ─────────────────────────────────
+
+# Extract the full Scenarios section (from "## Scenarios" until the next ## heading)
+SCENARIOS_SECTION=""
+in_scenarios=false
+while IFS= read -r line; do
+  if [[ "$line" =~ ^##\ Scenarios ]]; then
+    in_scenarios=true
+    continue
+  elif [[ "$in_scenarios" == true && "$line" =~ ^##\  && ! "$line" =~ ^###\  ]]; then
+    break
+  fi
+  if [[ "$in_scenarios" == true ]]; then
+    SCENARIOS_SECTION+="$line"$'\n'
+  fi
+done <<< "$SPEC_CONTENT"
+
+# Parse individual scenarios from the Scenarios section
+# Each scenario starts with "Scenario:" (possibly inside a gherkin block) and ends
+# before the next "Scenario:" or the end of the section.
+declare -a SCENARIO_NAMES SCENARIO_BODIES
+scenario_idx=-1
+current_scenario_body=""
+current_scenario_name=""
+
+while IFS= read -r line; do
+  if [[ "$line" =~ ^[[:space:]]*Scenario:[[:space:]]*(.+)$ ]]; then
+    # Save previous scenario
+    if [[ $scenario_idx -ge 0 ]]; then
+      SCENARIO_BODIES[$scenario_idx]="$current_scenario_body"
+    fi
+    ((scenario_idx++))
+    current_scenario_name="${BASH_REMATCH[1]}"
+    SCENARIO_NAMES[$scenario_idx]="$current_scenario_name"
+    current_scenario_body="$line"$'\n'
+  elif [[ $scenario_idx -ge 0 ]]; then
+    # Skip gherkin code fence markers (``` lines)
+    if [[ "$line" =~ ^[[:space:]]*\`\`\` ]]; then
+      continue
+    fi
+    current_scenario_body+="$line"$'\n'
+  fi
+done <<< "$SCENARIOS_SECTION"
+
+# Save last scenario
+if [[ $scenario_idx -ge 0 ]]; then
+  SCENARIO_BODIES[$scenario_idx]="$current_scenario_body"
+fi
+
+TOTAL_SCENARIOS=$((scenario_idx + 1))
+echo "Found $TOTAL_SCENARIOS scenarios in spec"
+
+# ── Parse Boundaries section from parent spec ────────────────────────────────
+
+BOUNDARIES_SECTION=""
+in_boundaries=false
+while IFS= read -r line; do
+  if [[ "$line" =~ ^##\ Boundaries ]]; then
+    in_boundaries=true
+    BOUNDARIES_SECTION+="## Boundaries"$'\n'
+    continue
+  elif [[ "$in_boundaries" == true && "$line" =~ ^##\  && ! "$line" =~ ^###\  ]]; then
+    break
+  fi
+  if [[ "$in_boundaries" == true ]]; then
+    BOUNDARIES_SECTION+="$line"$'\n'
+  fi
+done <<< "$SPEC_CONTENT"
+
+# ── Parse task scenario references ───────────────────────────────────────────
+
+declare -a TASK_SCENARIO_REFS
+for ((i=0; i<TOTAL; i++)); do
+  ref=$(echo "${TASK_BODIES[$i]}" | grep -oE '\*\*Scenarios\*\*:[[:space:]]*(.+)' | sed 's/\*\*Scenarios\*\*:[[:space:]]*//' | head -1)
+  TASK_SCENARIO_REFS[$i]="${ref:-}"
+done
+
+# ── Build sub-issue bodies with inlined Gherkin + verify lines ───────────────
+
+match_scenario_to_task() {
+  local scenario_name="$1"
+  local task_ref="$2"
+
+  # "All" matches everything
+  if [[ "$task_ref" == "All" || "$task_ref" == "all" ]]; then
+    return 0
+  fi
+
+  # Check if the scenario name appears in the comma-separated task ref list
+  IFS=',' read -ra refs <<< "$task_ref"
+  for ref in "${refs[@]}"; do
+    ref_clean=$(echo "$ref" | xargs)  # trim whitespace
+    if [[ "$scenario_name" == *"$ref_clean"* || "$ref_clean" == *"$scenario_name"* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+build_sub_issue_body() {
+  local idx=$1
+  local body="${TASK_BODIES[$idx]}"
+  local task_ref="${TASK_SCENARIO_REFS[$idx]:-}"
+
+  local output=""
+  output+="## Task Scope"$'\n'
+  output+="$body"$'\n'
+
+  # Add matched scenarios
+  if [[ -n "$task_ref" && $TOTAL_SCENARIOS -gt 0 ]]; then
+    output+="## Scenarios"$'\n'$'\n'
+    local matched=0
+    for ((s=0; s<TOTAL_SCENARIOS; s++)); do
+      if match_scenario_to_task "${SCENARIO_NAMES[$s]}" "$task_ref"; then
+        output+="${SCENARIO_BODIES[$s]}"$'\n'
+        ((matched++))
+      fi
+    done
+    if [[ $matched -eq 0 ]]; then
+      output+="_No matching scenarios found for: ${task_ref}_"$'\n'
+    fi
+    output+=$'\n'
+  fi
+
+  # Add boundaries section
+  if [[ -n "$BOUNDARIES_SECTION" ]]; then
+    output+="$BOUNDARIES_SECTION"$'\n'
+  fi
+
+  output+="---"$'\n'
+  output+="_Created by freeze-and-queue.sh from parent spec. Implement exactly what is specified._"
+  echo "$output"
+}
+
+# ── Execute: Create or update parent, create sub-issues ──────────────────────
+
+if [[ "$DRY_RUN" == true ]]; then
+  echo ""
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "  DRY RUN — No Linear API calls will be made"
+  echo "═══════════════════════════════════════════════════════════════"
+  echo ""
+
+  echo "--- PARENT ISSUE ---"
+  echo "Title: [Spec] $SPEC_TITLE"
+  echo "State: Draft (fallback: Backlog)"
+  echo "Description: (full spec content, ${#SPEC_CONTENT} chars)"
+  echo ""
+
+  if [[ "$PARENT_ONLY" == true ]]; then
+    echo "=== Dry run complete (--parent-only): 1 parent issue would be created ==="
+    exit 0
+  fi
+
+  # Interleaved creation order: create each sub-issue in Todo, then add its sequential blocking relation
+  relation_count=0
+  for ((k=0; k<TOTAL; k++)); do
+    i="${SORTED_INDICES[$k]}"
+    echo "--- SUB-ISSUE $((i+1)): ${TASK_TITLES[$i]} ---"
+    echo "Priority: ${TASK_PRIORITIES[$i]}"
+    echo "State: Todo"
+    echo "Scope: ${TASK_SCOPES[$i]:-<none>}"
+    echo "Scenarios ref: ${TASK_SCENARIO_REFS[$i]:-<none>}"
+    sub_body=$(build_sub_issue_body "$i")
+    echo "Body preview (first 10 lines):"
+    echo "$sub_body" | head -10 | sed 's/^/  /'
+    echo "  ..."
+    # Show sequential blocking relation immediately after this sub-issue
+    if [[ $k -gt 0 ]]; then
+      blocker_idx="${SORTED_INDICES[$((k-1))]}"
+      echo "  → blocked by Task $((blocker_idx+1)) (${TASK_TITLES[$blocker_idx]})"
+      ((relation_count++))
+    fi
+    echo ""
+  done
+
+  # Additional file-overlap relations (second pass, only those not already covered by sequential chain)
+  echo "--- FILE-OVERLAP RELATIONS ---"
+  overlap_count=0
+  for ((i=0; i<TOTAL; i++)); do
+    for ((j=i+1; j<TOTAL; j++)); do
+      if detect_overlap "${TASK_SCOPES[$i]:-}" "${TASK_SCOPES[$j]:-}"; then
+        # Check if this pair is already covered by sequential chain
+        already_covered=false
+        for ((k=0; k<TOTAL-1; k++)); do
+          si="${SORTED_INDICES[$k]}"
+          si_next="${SORTED_INDICES[$((k+1))]}"
+          if [[ "$si" == "$i" && "$si_next" == "$j" ]] || [[ "$si" == "$j" && "$si_next" == "$i" ]]; then
+            already_covered=true
+            break
+          fi
+        done
+        if [[ "$already_covered" == false ]]; then
+          echo "    Task $((j+1)) (${TASK_TITLES[$j]}) blocked by Task $((i+1)) (${TASK_TITLES[$i]}) (file overlap)"
+          ((relation_count++)) || true
+          ((overlap_count++)) || true
+        fi
+      fi
+    done
+  done
+  [[ $overlap_count -eq 0 ]] && echo "    (none)"
+
+  echo ""
+  echo "--- DEFERRED PROJECT ASSIGNMENT ---"
+  echo "Sub-issues created without project assignment."
+  echo "After all relations are created and verified, each sub-issue"
+  echo "receives projectId via issueUpdate (deferred batch assignment)."
+  echo ""
+  echo "=== Dry run complete: 1 parent + $TOTAL sub-issues (Todo) + $relation_count relations would be created ==="
+  exit 0
+fi
+
+# ── Live mode: resolve Linear config ─────────────────────────────────────────
+
+resolve_team_from_project
+
+# Resolve all workflow states in a single batch query
+resolve_all_states
+
+# Parent issue → Draft state (fallback to Backlog)
+DRAFT_STATE_NAME=""
+if [[ -n "$DRAFT_STATE_ID" ]]; then
+  DRAFT_STATE_NAME="Draft"
+elif [[ -n "$BACKLOG_STATE_ID" ]]; then
+  DRAFT_STATE_ID="$BACKLOG_STATE_ID"
+  DRAFT_STATE_NAME="Backlog"
+  echo "WARNING: 'Draft' state not found for team. Falling back to 'Backlog'..." >&2
+else
+  echo "WARNING: Neither 'Draft' nor 'Backlog' state found. Parent issue will use default state." >&2
+fi
+echo "Draft state: ${DRAFT_STATE_NAME:-<default>} (ID: ${DRAFT_STATE_ID:-<default>})"
+
+# Sub-issues → Todo state (always)
+TODO_STATE_NAME=""
+if [[ -n "$TODO_STATE_ID" ]]; then
+  TODO_STATE_NAME="Todo"
+else
+  echo "WARNING: 'Todo' state not found for team. Sub-issues will use default state." >&2
+fi
+echo "Todo state: ${TODO_STATE_NAME:-<default>} (ID: ${TODO_STATE_ID:-<default>})"
+
+# ── Create or update parent issue ────────────────────────────────────────────
+
+GQL_TMPFILE=""
+trap 'rm -f ${GQL_TMPFILE:+"$GQL_TMPFILE"}' EXIT
+
+if [[ -n "$UPDATE_ISSUE_ID" ]]; then
+  echo ""
+  echo "Updating existing parent issue: $UPDATE_ISSUE_ID"
+
+  # Build issueUpdate mutation via temp file (title/description are user-provided strings)
+  GQL_TMPFILE=$(mktemp)
+  if [[ -n "$DRAFT_STATE_ID" ]]; then
+    cat > "$GQL_TMPFILE" <<'GQLEOF'
+mutation($issueId: String!, $title: String!, $description: String!, $stateId: String!) {
+  issueUpdate(id: $issueId, input: {
+    title: $title
+    description: $description
+    stateId: $stateId
+  }) {
+    success
+    issue { id identifier url }
+  }
+}
+GQLEOF
+    result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "issueId=$UPDATE_ISSUE_ID" \
+      -v "title=[Spec] $SPEC_TITLE" \
+      -v "description=$SPEC_CONTENT" \
+      -v "stateId=$DRAFT_STATE_ID" \
+      - < "$GQL_TMPFILE" 2>&1)
+  else
+    cat > "$GQL_TMPFILE" <<'GQLEOF'
+mutation($issueId: String!, $title: String!, $description: String!) {
+  issueUpdate(id: $issueId, input: {
+    title: $title
+    description: $description
+  }) {
+    success
+    issue { id identifier url }
+  }
+}
+GQLEOF
+    result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "issueId=$UPDATE_ISSUE_ID" \
+      -v "title=[Spec] $SPEC_TITLE" \
+      -v "description=$SPEC_CONTENT" \
+      - < "$GQL_TMPFILE" 2>&1)
+  fi
+  rm -f "$GQL_TMPFILE"; GQL_TMPFILE=""
+
+  success=$(echo "$result" | jq -r '.data.issueUpdate.success // false')
+  PARENT_ID=$(echo "$result" | jq -r '.data.issueUpdate.issue.id // empty')
+  parent_identifier=$(echo "$result" | jq -r '.data.issueUpdate.issue.identifier // empty')
+  parent_url=$(echo "$result" | jq -r '.data.issueUpdate.issue.url // empty')
+  PARENT_IDENTIFIER="$parent_identifier"
+
+  if [[ "$success" == "true" && -n "$parent_identifier" ]]; then
+    echo "  Updated: $parent_identifier ($parent_url)"
+    verify_issue_creation "$PARENT_ID" "$PROJECT_SLUG"
+  else
+    echo "  FAILED to update parent issue" >&2
+    echo "  Response: $result" >&2
+    exit 1
+  fi
+else
+  echo ""
+  # Creating parent issue — includes projectId at creation time (unchanged)
+  echo "Creating parent issue..."
+
+  # Spec parent: issueCreate mutation via temp file (title/description are user-provided strings)
+  # Includes projectId at creation time (eliminates separate issues update --project call)
+  GQL_TMPFILE=$(mktemp)
+  if [[ -n "$DRAFT_STATE_ID" ]]; then
+    cat > "$GQL_TMPFILE" <<'GQLEOF'
+mutation($title: String!, $description: String!, $teamId: String!, $projectId: String!, $stateId: String!) {
+  issueCreate(input: {
+    title: $title
+    description: $description
+    teamId: $teamId
+    projectId: $projectId
+    stateId: $stateId
+  }) {
+    success
+    issue { id identifier url }
+  }
+}
+GQLEOF
+    result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "title=[Spec] $SPEC_TITLE" \
+      -v "description=$SPEC_CONTENT" \
+      -v "teamId=$TEAM_ID" \
+      -v "projectId=$PROJECT_ID" \
+      -v "stateId=$DRAFT_STATE_ID" \
+      - < "$GQL_TMPFILE" 2>&1)
+  else
+    cat > "$GQL_TMPFILE" <<'GQLEOF'
+mutation($title: String!, $description: String!, $teamId: String!, $projectId: String!) {
+  issueCreate(input: {
+    title: $title
+    description: $description
+    teamId: $teamId
+    projectId: $projectId
+  }) {
+    success
+    issue { id identifier url }
+  }
+}
+GQLEOF
+    result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "title=[Spec] $SPEC_TITLE" \
+      -v "description=$SPEC_CONTENT" \
+      -v "teamId=$TEAM_ID" \
+      -v "projectId=$PROJECT_ID" \
+      - < "$GQL_TMPFILE" 2>&1)
+  fi
+  rm -f "$GQL_TMPFILE"; GQL_TMPFILE=""
+
+  success=$(echo "$result" | jq -r '.data.issueCreate.success // false')
+  PARENT_ID=$(echo "$result" | jq -r '.data.issueCreate.issue.id // empty')
+  parent_identifier=$(echo "$result" | jq -r '.data.issueCreate.issue.identifier // empty')
+  parent_url=$(echo "$result" | jq -r '.data.issueCreate.issue.url // empty')
+  PARENT_IDENTIFIER="$parent_identifier"
+
+  if [[ "$success" == "true" && -n "$parent_identifier" && -n "$PARENT_ID" ]]; then
+    echo "  Created parent: $parent_identifier ($parent_url)"
+    verify_issue_creation "$PARENT_ID" "$PROJECT_SLUG"
+  else
+    echo "  FAILED to create parent issue" >&2
+    echo "  Response: $result" >&2
+    exit 1
+  fi
+fi
+
+# ── Parent-only mode: exit after parent creation ─────────────────────────────
+
+if [[ "$PARENT_ONLY" == true ]]; then
+  echo ""
+  echo "=== Done (--parent-only) ==="
+  echo "Parent: $PARENT_IDENTIFIER ($parent_url)"
+  echo ""
+  echo "Run again without --parent-only (with --update $PARENT_IDENTIFIER) to create sub-issues."
+  exit 0
+fi
+
+# ── Create sub-issues with interleaved relations ─────────────────────────────
+# Sub-issues are created in Todo state, sorted by priority. After each sub-issue
+# (except the first), a sequential blockedBy relation is immediately added to
+# the previous sub-issue before creating the next one.
+
+declare -a SUB_ISSUE_IDS SUB_ISSUE_IDENTIFIERS
+echo ""
+echo "Creating $TOTAL sub-issues (with interleaved sequential relations)..."
+# Sequential chain: skip first sub-issue (k=0, no blocker); k>=1 adds blockedBy to previous
+
+relation_count=0
+# Track created relations to avoid duplicates (bash 3.2 compatible — no associative arrays)
+CREATED_RELATIONS=""
+
+# Previous sub-issue tracking for sequential chain
+prev_sub_id=""
+prev_sub_ident=""
+
+for ((k=0; k<TOTAL; k++)); do
+  i="${SORTED_INDICES[$k]}"
+  title="${TASK_TITLES[$i]}"
+  sub_body=$(build_sub_issue_body "$i")
+
+  # Extract priority if present
+  pri_num=$(echo "${TASK_BODIES[$i]}" | grep -oE '\*\*Priority\*\*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | head -1)
+  linear_priority=${pri_num:-3}
+
+  # Write sub-issue body to temp file for description
+  echo "$sub_body" > "$SPEC_TMPFILE"
+
+  # Build sub-issue issueCreate mutation via temp file (title/description are user-provided strings)
+  # projectId is deferred — assigned via issueUpdate after blocking relations are verified.
+  # Priority is inlined as integer literal to avoid Int/String type coercion issues with -v flag.
+  GQL_TMPFILE=$(mktemp)
+  if [[ -n "$TODO_STATE_ID" ]]; then
+    cat > "$GQL_TMPFILE" <<GQLEOF
+mutation(\$title: String!, \$description: String!, \$teamId: String!, \$parentId: String!, \$stateId: String!) {
+  issueCreate(input: {
+    title: \$title
+    description: \$description
+    teamId: \$teamId
+    parentId: \$parentId
+    stateId: \$stateId
+    priority: ${linear_priority}
+  }) {
+    success
+    issue { id identifier url }
+  }
+}
+GQLEOF
+    result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "title=$title" \
+      -v "description=$(cat "$SPEC_TMPFILE")" \
+      -v "teamId=$TEAM_ID" \
+      -v "parentId=$PARENT_ID" \
+      -v "stateId=$TODO_STATE_ID" \
+      - < "$GQL_TMPFILE" 2>&1)
+  else
+    cat > "$GQL_TMPFILE" <<GQLEOF
+mutation(\$title: String!, \$description: String!, \$teamId: String!, \$parentId: String!) {
+  issueCreate(input: {
+    title: \$title
+    description: \$description
+    teamId: \$teamId
+    parentId: \$parentId
+    priority: ${linear_priority}
+  }) {
+    success
+    issue { id identifier url }
+  }
+}
+GQLEOF
+    result=$($LINEAR_CLI api query -o json --quiet --compact \
+      -v "title=$title" \
+      -v "description=$(cat "$SPEC_TMPFILE")" \
+      -v "teamId=$TEAM_ID" \
+      -v "parentId=$PARENT_ID" \
+      - < "$GQL_TMPFILE" 2>&1)
+  fi
+  rm -f "$GQL_TMPFILE"; GQL_TMPFILE=""
+
+  success=$(echo "$result" | jq -r '.data.issueCreate.success // false')
+  sub_identifier=$(echo "$result" | jq -r '.data.issueCreate.issue.identifier // empty')
+  sub_url=$(echo "$result" | jq -r '.data.issueCreate.issue.url // empty')
+  sub_id=$(echo "$result" | jq -r '.data.issueCreate.issue.id // empty')
+
+  if [[ "$success" == "true" && -n "$sub_identifier" && -n "$sub_id" ]]; then
+    # Sequential blocking: skip first (k=0, no blocker); for k>=1 add blockedBy to previous
+    SUB_ISSUE_IDS[$i]="$sub_id"
+    SUB_ISSUE_IDENTIFIERS[$i]="$sub_identifier"
+    echo "  Created sub-issue: $sub_identifier — $title ($sub_url)"
+    if [[ $k -ge 1 && -n "$prev_sub_id" ]]; then
+      if create_blocks_relation "$prev_sub_id" "$sub_id" "$prev_sub_ident" "$sub_identifier" "sequential"; then
+        CREATED_RELATIONS="${CREATED_RELATIONS}|${prev_sub_ident}:${sub_identifier}"
+        ((relation_count++))
+      fi
+    fi
+    verify_issue_creation_parent_only "$sub_id" "$PARENT_ID"
+
+    prev_sub_id="$sub_id"
+    prev_sub_ident="$sub_identifier"
+  else
+    echo "  FAILED: $title" >&2
+    echo "  Response: $result" >&2
+    SUB_ISSUE_IDS[$i]=""
+    SUB_ISSUE_IDENTIFIERS[$i]=""
+  fi
+done
+
+# ── File-overlap relations (second pass) ─────────────────────────────────────
+# Supplementary relations based on file overlap — don't affect dispatch order.
+
+echo ""
+echo "Creating file-overlap blockedBy relations..."
+
+for ((i=0; i<TOTAL; i++)); do
+  for ((j=i+1; j<TOTAL; j++)); do
+    if detect_overlap "${TASK_SCOPES[$i]:-}" "${TASK_SCOPES[$j]:-}"; then
+      blocker_id="${SUB_ISSUE_IDS[$i]:-}"
+      blocked_id="${SUB_ISSUE_IDS[$j]:-}"
+      blocker="${SUB_ISSUE_IDENTIFIERS[$i]:-}"
+      blocked="${SUB_ISSUE_IDENTIFIERS[$j]:-}"
+
+      if [[ -n "$blocker_id" && -n "$blocked_id" ]]; then
+        relation_key="${blocker}:${blocked}"
+        if [[ "$CREATED_RELATIONS" != *"|${relation_key}"* ]]; then
+          if create_blocks_relation "$blocker_id" "$blocked_id" "$blocker" "$blocked" "file overlap"; then
+            CREATED_RELATIONS="${CREATED_RELATIONS}|${relation_key}"
+            ((relation_count++))
+          fi
+        fi
+      fi
+    fi
+  done
+done
+
+[[ $relation_count -eq 0 ]] && echo "  (none)"
+
+# ── Verify blocking relations before project assignment ──────────────────────
+
+if [[ $TOTAL -gt 1 ]]; then
+  echo ""
+  echo "Verifying blocking relations..."
+  if ! verify_blocking_relations; then
+    echo "ERROR: Blocking relation verification failed. Project NOT assigned to sub-issues." >&2
+    exit 1
+  fi
+  echo "All blocking relations verified."
+fi
+
+# ── Batch project assignment (deferred) ──────────────────────────────────────
+# Project is assigned after sub-issue creation and relation verification pass.
+
+assign_project_to_sub_issues
+
+# ── Transition parent to Backlog (sub-issues now frozen) ─────────────────────
+# Only reached when PARENT_ONLY=false (--parent-only exits at line 555)
+
+echo ""
+# Transition parent to Backlog via issueUpdate GraphQL mutation using stateId
+GQL_TMPFILE=$(mktemp)
+cat > "$GQL_TMPFILE" <<'GQLEOF'
+mutation($issueId: String!, $stateId: String!) { issueUpdate(id: $issueId, input: { stateId: $stateId }) { success issue { id } } }
+GQLEOF
+$LINEAR_CLI api query -o json --quiet --compact \
+  -v "issueId=$PARENT_ID" \
+  -v "stateId=$BACKLOG_STATE_ID" \
+  - < "$GQL_TMPFILE" > /dev/null 2>&1 || true
+rm -f "$GQL_TMPFILE"; GQL_TMPFILE=""
+echo "Parent $PARENT_IDENTIFIER transitioned to Backlog"
+
+# ── Summary ──────────────────────────────────────────────────────────────────
+
+echo ""
+echo "=== Done ==="
+echo "Parent: $PARENT_IDENTIFIER ($parent_url)"
+echo "Sub-issues: $TOTAL created"
+echo "Relations: $relation_count blockedBy relations"
+echo ""
+echo "Symphony-ts will pick up these issues automatically when the pipeline runs."
