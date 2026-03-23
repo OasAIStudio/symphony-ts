@@ -15,10 +15,7 @@ import { claudeCode } from "ai-sdk-provider-claude-code";
 import { createMessageHandler } from "../src/slack-bot/handler.js";
 import { createCcSessionStore } from "../src/slack-bot/session-store.js";
 import { parseSlashCommand } from "../src/slack-bot/slash-commands.js";
-import type {
-  ChannelProjectMap,
-  SessionMap,
-} from "../src/slack-bot/types.js";
+import type { ChannelProjectMap, SessionMap } from "../src/slack-bot/types.js";
 
 // Helper to create a mock thread
 function createMockThread(channelId: string) {
@@ -61,10 +58,7 @@ async function* createAsyncIterable(chunks: string[]): AsyncIterable<string> {
 }
 
 // Helper to create a mock streamText return value with response promise
-function createMockStreamResult(
-  chunks: string[],
-  sessionId?: string,
-) {
+function createMockStreamResult(chunks: string[], sessionId?: string) {
   const messages = sessionId
     ? [{ providerMetadata: { "claude-code": { sessionId } } }]
     : [];
@@ -165,9 +159,7 @@ describe("Channel-to-project mapping via slash command", () => {
     vi.mocked(claudeCode).mockReturnValue(
       mockModel as unknown as ReturnType<typeof claudeCode>,
     );
-    vi.mocked(streamText).mockReturnValue(
-      createMockStreamResult(["Done"]),
-    );
+    vi.mocked(streamText).mockReturnValue(createMockStreamResult(["Done"]));
 
     const handler = createMessageHandler({
       channelMap,
@@ -201,9 +193,7 @@ describe("Channel-to-project mapping via slash command", () => {
   });
 
   it("overwrites existing channel mapping with /project set", async () => {
-    const channelMap: ChannelProjectMap = new Map([
-      ["C456", "/old/project"],
-    ]);
+    const channelMap: ChannelProjectMap = new Map([["C456", "/old/project"]]);
     const sessions: SessionMap = new Map();
     const ccSessions = createCcSessionStore();
 

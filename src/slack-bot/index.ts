@@ -14,7 +14,11 @@ import type { ChannelProjectMap, SessionMap, SlackBotConfig } from "./types.js";
 
 export type { SlackBotConfig, ChannelProjectMap, SessionMap } from "./types.js";
 export type { CcSessionStore } from "./session-store.js";
-export { createCcSessionStore, getCcSessionId, setCcSessionId } from "./session-store.js";
+export {
+  createCcSessionStore,
+  getCcSessionId,
+  setCcSessionId,
+} from "./session-store.js";
 export { parseSlashCommand } from "./slash-commands.js";
 export { createMessageHandler, splitAtParagraphs } from "./handler.js";
 

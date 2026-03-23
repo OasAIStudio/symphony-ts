@@ -63,10 +63,7 @@ async function* createAsyncIterable(chunks: string[]): AsyncIterable<string> {
 }
 
 // Helper to create a mock streamText return value with response promise
-function createMockStreamResult(
-  chunks: string[],
-  sessionId?: string,
-) {
+function createMockStreamResult(chunks: string[], sessionId?: string) {
   const messages = sessionId
     ? [{ providerMetadata: { "claude-code": { sessionId } } }]
     : [];
@@ -197,9 +194,7 @@ describe("createMessageHandler", () => {
     vi.mocked(claudeCode).mockReturnValue(
       mockModel as unknown as ReturnType<typeof claudeCode>,
     );
-    vi.mocked(streamText).mockReturnValue(
-      createMockStreamResult(["OK"]),
-    );
+    vi.mocked(streamText).mockReturnValue(createMockStreamResult(["OK"]));
 
     const handler = createMessageHandler({ channelMap, sessions, ccSessions });
     const thread = createMockThread("C123");
@@ -309,9 +304,7 @@ describe("createMessageHandler", () => {
     vi.mocked(claudeCode).mockReturnValue(
       mockModel as unknown as ReturnType<typeof claudeCode>,
     );
-    vi.mocked(streamText).mockReturnValue(
-      createMockStreamResult(["OK"]),
-    );
+    vi.mocked(streamText).mockReturnValue(createMockStreamResult(["OK"]));
 
     const handler = createMessageHandler({ channelMap, sessions, ccSessions });
     const thread = createMockThread("C123");

@@ -18,10 +18,7 @@ import {
   getCcSessionId,
   setCcSessionId,
 } from "../src/slack-bot/session-store.js";
-import type {
-  ChannelProjectMap,
-  SessionMap,
-} from "../src/slack-bot/types.js";
+import type { ChannelProjectMap, SessionMap } from "../src/slack-bot/types.js";
 
 // Helper to create a mock thread
 function createMockThread(channelId: string, threadTs: string) {
@@ -64,10 +61,7 @@ async function* createAsyncIterable(chunks: string[]): AsyncIterable<string> {
 }
 
 // Helper to create a mock streamText return value with response promise
-function createMockStreamResult(
-  chunks: string[],
-  sessionId?: string,
-) {
+function createMockStreamResult(chunks: string[], sessionId?: string) {
   const messages = sessionId
     ? [{ providerMetadata: { "claude-code": { sessionId } } }]
     : [];
@@ -188,13 +182,10 @@ describe("Session continuity in handler", () => {
     );
 
     // Verify claudeCode was called WITHOUT resume
-    expect(claudeCode).toHaveBeenCalledWith(
-      expect.any(String),
-      {
-        cwd: "/tmp/test-project",
-        permissionMode: "bypassPermissions",
-      },
-    );
+    expect(claudeCode).toHaveBeenCalledWith(expect.any(String), {
+      cwd: "/tmp/test-project",
+      permissionMode: "bypassPermissions",
+    });
   });
 
   it("stores session ID from provider metadata after response", async () => {
@@ -242,9 +233,7 @@ describe("Session continuity in handler", () => {
       mockModel as unknown as ReturnType<typeof claudeCode>,
     );
     // No sessionId in the response
-    vi.mocked(streamText).mockReturnValue(
-      createMockStreamResult(["Hello"]),
-    );
+    vi.mocked(streamText).mockReturnValue(createMockStreamResult(["Hello"]));
 
     const handler = createMessageHandler({
       channelMap,

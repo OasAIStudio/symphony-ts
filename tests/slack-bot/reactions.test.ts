@@ -79,7 +79,11 @@ describe("Reaction lifecycle", () => {
       response: Promise.resolve({ messages: [] }),
     } as unknown as ReturnType<typeof streamText>);
 
-    const handler = createMessageHandler({ channelMap, sessions, ccSessions: createCcSessionStore() });
+    const handler = createMessageHandler({
+      channelMap,
+      sessions,
+      ccSessions: createCcSessionStore(),
+    });
     const thread = createMockThread("C123");
     const message = createMockMessage("test");
 
@@ -117,7 +121,11 @@ describe("Reaction lifecycle", () => {
       response: Promise.resolve({ messages: [] }),
     } as unknown as ReturnType<typeof streamText>);
 
-    const handler = createMessageHandler({ channelMap, sessions, ccSessions: createCcSessionStore() });
+    const handler = createMessageHandler({
+      channelMap,
+      sessions,
+      ccSessions: createCcSessionStore(),
+    });
     const thread = createMockThread("C123");
     const message = createMockMessage("test");
 
@@ -176,7 +184,11 @@ describe("Reaction lifecycle", () => {
       response: Promise.resolve({ messages: [] }),
     } as unknown as ReturnType<typeof streamText>);
 
-    const handler = createMessageHandler({ channelMap, sessions, ccSessions: createCcSessionStore() });
+    const handler = createMessageHandler({
+      channelMap,
+      sessions,
+      ccSessions: createCcSessionStore(),
+    });
     const thread = createMockThread("C123");
     const message = createMockMessage("test");
 
