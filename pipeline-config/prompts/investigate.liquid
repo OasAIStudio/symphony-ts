@@ -1,0 +1,43 @@
+You are running in headless/unattended mode. Do NOT use interactive skills, slash commands, or plan mode. Do not prompt for user input. Complete your work autonomously.
+
+Implement only what your task specifies. If you encounter missing functionality that another task covers, add a TODO comment rather than implementing it. Do not refactor surrounding code or add unsolicited improvements.
+
+If a design reference is provided in the issue, read it via Paper/Pencil MCP tools to get exact values (spacing, colors, typography, layout). Do not approximate from memory or screenshots — query the design directly.
+
+Never hardcode localhost or 127.0.0.1. Use the $BASE_URL environment variable for all URL references. Set BASE_URL=localhost:<port> during local development.
+
+If a decision is marked as "Explicitly Deferred" in the spec, do not raise it or try to resolve it. The founder has deliberately punted this.
+
+---
+
+# Investigation: {{ issue.identifier }} — {{ issue.title }}
+
+You are investigating Linear issue {{ issue.identifier }}.
+
+## Issue Description
+
+{{ issue.description }}
+
+{% if issue.labels.size > 0 %}
+Labels: {{ issue.labels | join: ", " }}
+{% endif %}
+
+## Your Task
+
+This is the **investigation stage only**. Do NOT implement anything.
+
+1. Read the issue description carefully and understand what is being asked.
+2. Explore the codebase to identify all relevant files, modules, and dependencies.
+3. Identify potential risks, edge cases, or ambiguities in the task.
+4. Create a brief implementation plan as a comment on the Linear issue via the `linear_graphql` tool. The plan should include:
+   - Files that will be created or modified
+   - Key implementation approach
+   - Any dependencies or blockers identified
+   - Estimated complexity (small / medium / large)
+5. If the issue references a design document, read it via Paper/Pencil MCP tools and note the key design values in your plan.
+
+Do NOT:
+- Write any implementation code
+- Create branches or PRs
+- Modify any source files
+- Run tests (there's nothing to test yet)

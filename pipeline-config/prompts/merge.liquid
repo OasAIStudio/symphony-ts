@@ -1,0 +1,26 @@
+You are running in headless/unattended mode. Do NOT use interactive skills, slash commands, or plan mode. Do not prompt for user input. Complete your work autonomously.
+
+---
+
+# Merge: {{ issue.identifier }} — {{ issue.title }}
+
+You are merging the PR for Linear issue {{ issue.identifier }}.
+
+{% if issue.url %}PR URL: {{ issue.url }}{% endif %}
+
+## Merge Steps
+
+1. Verify CI is green on the PR. Check via `gh pr checks` or `gh pr view --json statusCheckRollup`.
+2. If CI is not green, do NOT merge. Report the failure and stop.
+3. Squash merge the PR via:
+   ```
+   gh pr merge --squash --delete-branch --repo $(git remote get-url origin | sed "s|.*github.com/||;s|\.git$||")
+   ```
+4. Update the Linear issue state to "Done" using the `linear_graphql` tool.
+5. Verify the merge was successful by checking the PR status.
+
+## Important
+
+- Do NOT force merge if checks are failing.
+- Do NOT merge if the PR has unresolved review comments.
+- If the merge fails due to conflicts, move the issue back to "In Progress" state and stop.

@@ -78,6 +78,31 @@ describe("prompt builder", () => {
     expect(prompt).toBe("first-run");
   });
 
+  it("makes stageName available in the template context", async () => {
+    const prompt = await renderPrompt({
+      workflow: {
+        promptTemplate:
+          '{% if stageName == "investigate" %}research{% else %}build{% endif %}',
+      },
+      issue: ISSUE_FIXTURE,
+      attempt: null,
+      stageName: "investigate",
+    });
+
+    expect(prompt).toBe("research");
+
+    const promptNull = await renderPrompt({
+      workflow: {
+        promptTemplate:
+          "{% if stageName == nil %}no-stage{% else %}has-stage{% endif %}",
+      },
+      issue: ISSUE_FIXTURE,
+      attempt: null,
+    });
+
+    expect(promptNull).toBe("no-stage");
+  });
+
   it("uses the rendered workflow prompt for the first turn and continuation guidance after that", async () => {
     const first = await buildTurnPrompt({
       workflow: {
@@ -148,6 +173,104 @@ describe("prompt builder", () => {
       code: ERROR_CODES.templateRenderError,
       kind: "template_render_error",
     } satisfies Partial<PromptTemplateError>);
+  });
+
+  it("includes investigate constraints and STAGE_COMPLETE in continuation when stageName is investigate", () => {
+    const prompt = buildContinuationPrompt({
+      issue: ISSUE_FIXTURE,
+      attempt: null,
+      turnNumber: 2,
+      maxTurns: 5,
+      stageName: "investigate",
+    });
+
+    expect(prompt).toContain("Current stage: investigate.");
+    expect(prompt).toContain("Do NOT implement code");
+    expect(prompt).toContain("[STAGE_COMPLETE]");
+  });
+
+  it("includes implement constraints and STAGE_COMPLETE in continuation when stageName is implement", () => {
+    const prompt = buildContinuationPrompt({
+      issue: ISSUE_FIXTURE,
+      attempt: null,
+      turnNumber: 2,
+      maxTurns: 5,
+      stageName: "implement",
+    });
+
+    expect(prompt).toContain("Current stage: implement.");
+    expect(prompt).toContain("IMPLEMENT stage");
+    expect(prompt).toContain("[STAGE_COMPLETE]");
+  });
+
+  it("does not include STAGE_COMPLETE in continuation when stageName is null", () => {
+    const prompt = buildContinuationPrompt({
+      issue: ISSUE_FIXTURE,
+      attempt: null,
+      turnNumber: 2,
+      maxTurns: 5,
+      stageName: null,
+    });
+
+    expect(prompt).not.toContain("[STAGE_COMPLETE]");
+    expect(prompt).not.toContain("Current stage:");
+  });
+
+  it("passes stageName through buildTurnPrompt to continuation on turn > 1", async () => {
+    const prompt = await buildTurnPrompt({
+      workflow: {
+        promptTemplate: "Initial {{ issue.identifier }}",
+      },
+      issue: ISSUE_FIXTURE,
+      attempt: null,
+      stageName: "investigate",
+      turnNumber: 2,
+      maxTurns: 4,
+    });
+
+    expect(prompt).toContain("Current stage: investigate.");
+    expect(prompt).toContain("Do NOT implement code");
+    expect(prompt).toContain("[STAGE_COMPLETE]");
+  });
+
+  it("makes reworkCount available in the template context, defaulting to 0", async () => {
+    const prompt = await renderPrompt({
+      workflow: {
+        promptTemplate: "rework={{ reworkCount }}",
+      },
+      issue: ISSUE_FIXTURE,
+      attempt: null,
+    });
+
+    expect(prompt).toBe("rework=0");
+  });
+
+  it("renders reworkCount when explicitly provided", async () => {
+    const prompt = await renderPrompt({
+      workflow: {
+        promptTemplate:
+          "{% if reworkCount > 0 %}rework attempt {{ reworkCount }}{% else %}first attempt{% endif %}",
+      },
+      issue: ISSUE_FIXTURE,
+      attempt: null,
+      reworkCount: 3,
+    });
+
+    expect(prompt).toBe("rework attempt 3");
+  });
+
+  it("renders reworkCount as 0 on first attempt", async () => {
+    const prompt = await renderPrompt({
+      workflow: {
+        promptTemplate:
+          "{% if reworkCount > 0 %}rework attempt {{ reworkCount }}{% else %}first attempt{% endif %}",
+      },
+      issue: ISSUE_FIXTURE,
+      attempt: null,
+      reworkCount: 0,
+    });
+
+    expect(prompt).toBe("first attempt");
   });
 
   it("reports invalid template syntax as a parse error", async () => {

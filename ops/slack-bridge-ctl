@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# slack-bridge-ctl — manage the Slack bridge as a macOS launchd service
+# Usage: slack-bridge-ctl {install|uninstall|start|stop|restart|status|logs|tail|cleanup}
+
+SCRIPT_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
+SYMPHONY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Defaults — override via environment or .env
+SERVICE_LABEL="com.slack-bridge"
+PLIST_PATH="$HOME/Library/LaunchAgents/${SERVICE_LABEL}.plist"
+LOG_DIR="$HOME/Library/Logs/slack-bridge"
+ENV_FILE="${SLACK_BRIDGE_ENV_FILE:-$SYMPHONY_ROOT/.env}"
+NODE_BIN="${SLACK_BRIDGE_NODE:-$(which node 2>/dev/null || echo /opt/homebrew/bin/node)}"
+CLI_JS="$SYMPHONY_ROOT/dist/src/slack-bot/server.js"
+
+# Colors (disabled if not a terminal)
+if [[ -t 1 ]]; then
+  RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; CYAN='\033[0;36m'; NC='\033[0m'
+else
+  RED=''; GREEN=''; YELLOW=''; CYAN=''; NC=''
+fi
+
+info()  { echo -e "${CYAN}▸${NC} $*"; }
+ok()    { echo -e "${GREEN}✓${NC} $*"; }
+warn()  { echo -e "${YELLOW}⚠${NC} $*" >&2; }
+die()   { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
+
+# --- Precondition checks ---
+
+check_node() {
+  [[ -x "$NODE_BIN" ]] || die "Node not found at $NODE_BIN. Set SLACK_BRIDGE_NODE or install Node >= 22."
+}
+
+check_built() {
+  [[ -f "$CLI_JS" ]] || die "Built CLI not found at $CLI_JS. Run 'pnpm build' in $SYMPHONY_ROOT first."
+}
+
+check_env_file() {
+  [[ -f "$ENV_FILE" ]] || die ".env file not found at $ENV_FILE. Set SLACK_BRIDGE_ENV_FILE to override."
+}
+
+check_not_installed() {
+  [[ ! -f "$PLIST_PATH" ]] || die "Service already installed at $PLIST_PATH. Run 'uninstall' first."
+}
+
+check_installed() {
+  [[ -f "$PLIST_PATH" ]] || die "Service not installed. Run 'install' first."
+}
+
+# --- .env → plist EnvironmentVariables ---
+
+generate_env_dict() {
+  local env_dict=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Skip comments and blank lines
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    line="$(echo "$line" | xargs)"
+    [[ -z "$line" ]] && continue
+
+    local key="${line%%=*}"
+    local value="${line#*=}"
+    # Remove surrounding quotes from value
+    value="${value#\"}" ; value="${value%\"}"
+    value="${value#\'}" ; value="${value%\'}"
+    # Strip inline comments
+    value="${value%% \#*}"
+
+    env_dict+="      <key>${key}</key>"$'\n'
+    env_dict+="      <string>${value}</string>"$'\n'
+  done < "$ENV_FILE"
+  echo "$env_dict"
+}
+
+# --- Commands ---
+
+cmd_install() {
+  check_node
+  check_built
+  check_env_file
+  check_not_installed
+
+  info "Installing $SERVICE_LABEL ..."
+
+  mkdir -p "$LOG_DIR"
+  mkdir -p "$(dirname "$PLIST_PATH")"
+
+  local env_dict
+  env_dict="$(generate_env_dict)"
+
+  cat > "$PLIST_PATH" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${SERVICE_LABEL}</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>${NODE_BIN}</string>
+        <string>${CLI_JS}</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>${SYMPHONY_ROOT}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PATH</key>
+      <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+      <key>HOME</key>
+      <string>${HOME}</string>
+      <key>NODE_ENV</key>
+      <string>production</string>
+${env_dict}    </dict>
+
+    <key>StandardOutPath</key>
+    <string>${LOG_DIR}/stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>${LOG_DIR}/stderr.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
+PLIST
+
+  ok "Plist written to $PLIST_PATH"
+  info "Run 'slack-bridge-ctl start' to start the service."
+}
+
+cmd_uninstall() {
+  check_installed
+  cmd_stop 2>/dev/null || true
+  rm -f "$PLIST_PATH"
+  ok "Service uninstalled."
+}
+
+cmd_start() {
+  check_installed
+  launchctl load "$PLIST_PATH"
+  ok "Service started."
+}
+
+cmd_stop() {
+  check_installed
+  launchctl unload "$PLIST_PATH" 2>/dev/null || true
+  ok "Service stopped."
+}
+
+cmd_restart() {
+  cmd_stop
+  cmd_start
+}
+
+cmd_status() {
+  if launchctl list "$SERVICE_LABEL" &>/dev/null; then
+    ok "Service is running."
+    launchctl list "$SERVICE_LABEL"
+  else
+    warn "Service is not running."
+  fi
+}
+
+cmd_logs() {
+  if [[ -f "$LOG_DIR/stdout.log" ]]; then
+    cat "$LOG_DIR/stdout.log"
+  else
+    warn "No stdout log found at $LOG_DIR/stdout.log"
+  fi
+  if [[ -f "$LOG_DIR/stderr.log" ]]; then
+    echo "--- stderr ---"
+    cat "$LOG_DIR/stderr.log"
+  fi
+}
+
+cmd_tail() {
+  tail -f "$LOG_DIR/stdout.log" "$LOG_DIR/stderr.log" 2>/dev/null || die "No log files found in $LOG_DIR"
+}
+
+cmd_cleanup() {
+  info "Cleaning up logs in $LOG_DIR ..."
+  rm -f "$LOG_DIR"/*.log
+  ok "Logs cleaned."
+}
+
+# --- Main ---
+
+case "${1:-}" in
+  install)   cmd_install ;;
+  uninstall) cmd_uninstall ;;
+  start)     cmd_start ;;
+  stop)      cmd_stop ;;
+  restart)   cmd_restart ;;
+  status)    cmd_status ;;
+  logs)      cmd_logs ;;
+  tail)      cmd_tail ;;
+  cleanup)   cmd_cleanup ;;
+  *)
+    echo "Usage: $(basename "$0") {install|uninstall|start|stop|restart|status|logs|tail|cleanup}"
+    exit 1
+    ;;
+esac

@@ -11,8 +11,14 @@ import {
 } from "./linear-normalize.js";
 import {
   LINEAR_CANDIDATE_ISSUES_QUERY,
+  LINEAR_CREATE_COMMENT_MUTATION,
+  LINEAR_ISSUES_BY_LABELS_QUERY,
   LINEAR_ISSUES_BY_STATES_QUERY,
+  LINEAR_ISSUE_PARENT_AND_SIBLINGS_QUERY,
   LINEAR_ISSUE_STATES_BY_IDS_QUERY,
+  LINEAR_ISSUE_UPDATE_MUTATION,
+  LINEAR_OPEN_ISSUES_BY_LABELS_QUERY,
+  LINEAR_WORKFLOW_STATES_QUERY,
 } from "./linear-queries.js";
 import type { IssueStateSnapshot, IssueTracker } from "./tracker.js";
 
@@ -45,6 +51,45 @@ type LinearStatesData = LinearCandidateData;
 interface LinearIssueStatesData {
   issues?: {
     nodes?: unknown;
+  };
+}
+
+interface LinearIssueUpdateData {
+  issueUpdate?: {
+    success?: boolean;
+    issue?: { id?: string; state?: { name?: string } };
+  };
+}
+
+interface LinearCommentCreateData {
+  commentCreate?: {
+    success?: boolean;
+    comment?: { id?: string };
+  };
+}
+
+interface LinearIssueParentAndSiblingsData {
+  issue?: {
+    id?: string;
+    identifier?: string;
+    parent?: {
+      id?: string;
+      identifier?: string;
+      state?: { name?: string };
+      children?: {
+        nodes?: Array<{
+          id?: string;
+          identifier?: string;
+          state?: { name?: string };
+        }>;
+      };
+    } | null;
+  };
+}
+
+interface LinearWorkflowStatesData {
+  workflowStates?: {
+    nodes?: Array<{ id?: string; name?: string }>;
   };
 }
 
@@ -100,6 +145,52 @@ export class LinearTrackerClient implements IssueTracker {
     });
   }
 
+  async fetchIssuesByLabels(labelNames: string[]): Promise<Issue[]> {
+    if (labelNames.length === 0) {
+      return [];
+    }
+
+    return this.fetchIssuePages(LINEAR_ISSUES_BY_LABELS_QUERY, {
+      projectSlug: this.requireProjectSlug(),
+      labelNames,
+      first: this.pageSize,
+      relationFirst: this.pageSize,
+    });
+  }
+
+  async fetchOpenIssuesByLabels(
+    labelNames: string[],
+    excludeStateNames: string[],
+  ): Promise<Issue[]> {
+    if (labelNames.length === 0) {
+      return [];
+    }
+
+    // Single GraphQL call — we only need to know if any non-terminal halt issue
+    // exists, so fetch at most 1 result. No pagination needed.
+    const response = await this.postGraphql<LinearCandidateData>(
+      LINEAR_OPEN_ISSUES_BY_LABELS_QUERY,
+      {
+        projectSlug: this.requireProjectSlug(),
+        labelNames,
+        excludeStateNames,
+        first: 1,
+        relationFirst: this.pageSize,
+      },
+    );
+
+    const nodes = response.issues?.nodes;
+    if (!Array.isArray(nodes)) {
+      throw new TrackerError(
+        ERROR_CODES.linearUnknownPayload,
+        "Linear open issues by labels payload was missing issues.nodes.",
+        { details: response },
+      );
+    }
+
+    return nodes.map((node) => normalizeLinearIssue(node));
+  }
+
   async fetchIssueStatesByIds(
     issueIds: string[],
   ): Promise<IssueStateSnapshot[]> {
@@ -124,6 +215,109 @@ export class LinearTrackerClient implements IssueTracker {
     }
 
     return nodes.map((node) => normalizeLinearIssueState(node));
+  }
+
+  async postComment(issueId: string, body: string): Promise<void> {
+    const response = await this.postGraphql<LinearCommentCreateData>(
+      LINEAR_CREATE_COMMENT_MUTATION,
+      { issueId, body },
+    );
+
+    if (response.commentCreate?.success !== true) {
+      throw new TrackerError(
+        ERROR_CODES.linearGraphqlErrors,
+        "Linear commentCreate mutation did not return success.",
+        { details: response },
+      );
+    }
+  }
+
+  async updateIssueState(
+    issueId: string,
+    stateName: string,
+    teamKey: string,
+  ): Promise<void> {
+    const statesResponse = await this.postGraphql<LinearWorkflowStatesData>(
+      LINEAR_WORKFLOW_STATES_QUERY,
+      { teamId: teamKey },
+    );
+
+    const states = statesResponse.workflowStates?.nodes;
+    if (!Array.isArray(states)) {
+      throw new TrackerError(
+        ERROR_CODES.linearUnknownPayload,
+        "Linear workflowStates payload was missing nodes.",
+        { details: statesResponse },
+      );
+    }
+
+    const targetState = states.find(
+      (s) =>
+        typeof s.name === "string" &&
+        s.name.toLowerCase() === stateName.toLowerCase(),
+    );
+    if (!targetState || typeof targetState.id !== "string") {
+      throw new TrackerError(
+        ERROR_CODES.linearUnknownPayload,
+        `Linear workflow state "${stateName}" not found for team "${teamKey}".`,
+        { details: { states, targetStateName: stateName } },
+      );
+    }
+
+    const updateResponse = await this.postGraphql<LinearIssueUpdateData>(
+      LINEAR_ISSUE_UPDATE_MUTATION,
+      { issueId, stateId: targetState.id },
+    );
+
+    if (updateResponse.issueUpdate?.success !== true) {
+      throw new TrackerError(
+        ERROR_CODES.linearGraphqlErrors,
+        "Linear issueUpdate mutation did not return success.",
+        { details: updateResponse },
+      );
+    }
+  }
+
+  async checkAndCloseParent(
+    issueId: string,
+    terminalStates: string[],
+    teamKey: string,
+  ): Promise<void> {
+    const terminalSet = new Set(terminalStates.map((s) => s.toLowerCase()));
+
+    const response = await this.postGraphql<LinearIssueParentAndSiblingsData>(
+      LINEAR_ISSUE_PARENT_AND_SIBLINGS_QUERY,
+      { issueId },
+    );
+
+    const parent = response.issue?.parent;
+    if (!parent || !parent.id || !parent.identifier) {
+      // No parent — nothing to do
+      return;
+    }
+
+    const siblings = parent.children?.nodes;
+    if (!Array.isArray(siblings) || siblings.length === 0) {
+      return;
+    }
+
+    const allTerminal = siblings.every((sibling) => {
+      const stateName = sibling.state?.name;
+      return (
+        typeof stateName === "string" &&
+        terminalSet.has(stateName.toLowerCase())
+      );
+    });
+
+    if (!allTerminal) {
+      return;
+    }
+
+    console.log(
+      `[orchestrator] Auto-closing parent ${parent.identifier} — all sub-issues complete`,
+    );
+
+    await this.updateIssueState(parent.id, "Done", teamKey);
   }
 
   async executeRawGraphql(

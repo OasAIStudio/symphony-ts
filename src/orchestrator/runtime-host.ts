@@ -3,13 +3,21 @@ import { access, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Writable } from "node:stream";
 
-import type { AgentRunResult, AgentRunnerEvent } from "../agent/runner.js";
+import type {
+  AgentRunInput,
+  AgentRunResult,
+  AgentRunnerEvent,
+} from "../agent/runner.js";
 import { AgentRunner } from "../agent/runner.js";
 import { validateDispatchConfig } from "../config/config-resolver.js";
-import type { ResolvedWorkflowConfig } from "../config/types.js";
+import type {
+  ResolvedWorkflowConfig,
+  StageDefinition,
+} from "../config/types.js";
 import { WorkflowWatcher } from "../config/workflow-watch.js";
 import type { Issue, RetryEntry, RunningEntry } from "../domain/model.js";
 import { ERROR_CODES } from "../errors/codes.js";
+import { formatEasternTimestamp } from "../logging/format-timestamp.js";
 import {
   type RuntimeSnapshot,
   buildRuntimeSnapshot,
@@ -25,8 +33,11 @@ import {
   type RefreshResponse,
   startDashboardServer,
 } from "../observability/dashboard-server.js";
+import { createRunnerFromConfig, isAiSdkRunner } from "../runners/factory.js";
+import type { RunnerKind } from "../runners/types.js";
 import { LinearTrackerClient } from "../tracker/linear-client.js";
 import type { IssueTracker } from "../tracker/tracker.js";
+import { getDisplayVersion } from "../version.js";
 import { WorkspaceHookRunner } from "../workspace/hooks.js";
 import { WorkspaceManager } from "../workspace/workspace-manager.js";
 import type {
@@ -35,13 +46,10 @@ import type {
   TimerScheduler,
 } from "./core.js";
 import { OrchestratorCore } from "./core.js";
+import { runEnsembleGate } from "./gate-handler.js";
 
 export interface AgentRunnerLike {
-  run(input: {
-    issue: Issue;
-    attempt: number | null;
-    signal?: AbortSignal;
-  }): Promise<AgentRunResult>;
+  run(input: AgentRunInput): Promise<AgentRunResult>;
 }
 
 export interface RuntimeHostOptions {
@@ -66,6 +74,7 @@ export interface RuntimeServiceOptions {
   now?: () => Date;
   logger?: StructuredLogger;
   stdout?: Writable;
+  shutdownTimeoutMs?: number;
 }
 
 export interface RuntimeServiceHandle {
@@ -79,11 +88,15 @@ export interface RuntimeServiceHandle {
 interface WorkerExecution {
   issueId: string;
   issueIdentifier: string;
+  stageName: string | null;
   controller: AbortController;
   completion: Promise<void>;
   stopRequest: StopRequest | null;
   lastResult: AgentRunResult | null;
 }
+
+/** Maximum ms to wait for idle workers during shutdown before forcing exit. */
+const SHUTDOWN_IDLE_TIMEOUT_MS = 30_000;
 
 export class RuntimeHostStartupError extends Error {
   readonly code: string;
@@ -166,8 +179,48 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
       tracker: options.tracker,
       now: this.now,
       timerScheduler,
-      spawnWorker: async ({ issue, attempt }) =>
-        this.spawnWorkerExecution(issue, attempt),
+      ...(this.tracker instanceof LinearTrackerClient
+        ? {
+            postComment: async (issueId: string, body: string) => {
+              await (this.tracker as LinearTrackerClient).postComment(
+                issueId,
+                body,
+              );
+            },
+            updateIssueState: async (
+              issueId: string,
+              issueIdentifier: string,
+              stateName: string,
+            ) => {
+              const teamKey = issueIdentifier.split("-")[0] ?? issueIdentifier;
+              await (this.tracker as LinearTrackerClient).updateIssueState(
+                issueId,
+                stateName,
+                teamKey,
+              );
+            },
+            autoCloseParentIssue: async (
+              issueId: string,
+              issueIdentifier: string,
+            ) => {
+              const teamKey = issueIdentifier.split("-")[0] ?? issueIdentifier;
+              const terminalStates = options.config.tracker.terminalStates;
+              await (this.tracker as LinearTrackerClient).checkAndCloseParent(
+                issueId,
+                terminalStates,
+                teamKey,
+              );
+            },
+          }
+        : {}),
+      spawnWorker: async ({ issue, attempt, stage, stageName, reworkCount }) =>
+        this.spawnWorkerExecution(
+          issue,
+          attempt,
+          stage,
+          stageName,
+          reworkCount,
+        ),
       stopRunningIssue: async (input) => {
         await this.stopWorkerExecution(input.issueId, {
           issueId: input.issueId,
@@ -175,6 +228,40 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
           cleanupWorkspace: input.cleanupWorkspace,
           reason: input.reason,
         });
+      },
+      runEnsembleGate: async ({ issue, stage }) => {
+        const workspaceInfo = this.workspaceManager.resolveForIssue(issue.id);
+        const gateOptions = {
+          issue,
+          stage,
+          workspacePath: workspaceInfo.workspacePath,
+          createReviewerClient: (
+            reviewer: import("../config/types.js").ReviewerDefinition,
+          ) => {
+            const kind = (reviewer.runner ??
+              options.config.runner.kind) as RunnerKind;
+            if (!isAiSdkRunner(kind)) {
+              throw new Error(
+                `Reviewer runner kind "${kind}" is not an AI SDK runner — only claude-code and gemini are supported for ensemble review.`,
+              );
+            }
+            return createRunnerFromConfig({
+              config: { kind, model: reviewer.model },
+              cwd: workspaceInfo.workspacePath,
+              onEvent: () => {},
+            });
+          },
+        };
+        if (this.tracker instanceof LinearTrackerClient) {
+          const tracker = this.tracker;
+          return runEnsembleGate({
+            ...gateOptions,
+            postComment: async (issueId: string, body: string) => {
+              await tracker.postComment(issueId, body);
+            },
+          });
+        }
+        return runEnsembleGate(gateOptions);
       },
     };
 
@@ -272,7 +359,7 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
   }
 
   async requestRefresh(): Promise<RefreshResponse> {
-    const requestedAt = this.now().toISOString();
+    const requestedAt = formatEasternTimestamp(this.now());
     const coalesced = this.refreshQueued;
     this.refreshQueued = true;
 
@@ -298,9 +385,20 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
     };
   }
 
+  abortAllWorkers(): number {
+    const count = this.workers.size;
+    for (const worker of this.workers.values()) {
+      worker.controller.abort("Shutdown: aborting running workers.");
+    }
+    return count;
+  }
+
   private async spawnWorkerExecution(
     issue: Issue,
     attempt: number | null,
+    stage: StageDefinition | null = null,
+    stageName: string | null = null,
+    reworkCount = 0,
   ): Promise<{
     workerHandle: WorkerExecution;
     monitorHandle: Promise<void>;
@@ -311,23 +409,39 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
       issue_identifier: issue.identifier,
       attempt,
       state: issue.state,
+      ...(stageName !== null ? { stage: stageName } : {}),
     });
 
     const controller = new AbortController();
     const execution: WorkerExecution = {
       issueId: issue.id,
       issueIdentifier: issue.identifier,
+      stageName,
       controller,
       stopRequest: null,
       lastResult: null,
       completion: Promise.resolve(),
     };
 
+    await this.logger?.info(
+      "agent_runner_starting",
+      "Agent runner starting for issue.",
+      {
+        outcome: "started",
+        issue_id: issue.id,
+        issue_identifier: issue.identifier,
+        ...(stageName !== null ? { stage: stageName } : {}),
+      },
+    );
+
     const completion = this.agentRunner
       .run({
         issue,
         attempt,
         signal: controller.signal,
+        stage,
+        stageName,
+        reworkCount,
       })
       .then(async (result) => {
         execution.lastResult = result;
@@ -339,6 +453,12 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
         });
       })
       .catch(async (error) => {
+        await this.logger?.error("agent_runner_error", toErrorMessage(error), {
+          outcome: "failed",
+          issue_id: issue.id,
+          issue_identifier: issue.identifier,
+          ...(stageName !== null ? { stage: stageName } : {}),
+        });
         await this.enqueue(async () => {
           await this.finalizeWorkerExecution(execution, {
             outcome: "abnormal",
@@ -399,15 +519,71 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
       },
     );
 
+    const liveSession = execution.lastResult?.liveSession;
+    const durationMs = execution.lastResult?.runAttempt?.startedAt
+      ? this.now().getTime() -
+        new Date(execution.lastResult.runAttempt.startedAt).getTime()
+      : 0;
+    await this.logger?.log("info", "stage_completed", "Stage completed.", {
+      issue_id: execution.issueId,
+      issue_identifier: execution.issueIdentifier,
+      session_id: liveSession?.sessionId ?? null,
+      stage_name: execution.stageName,
+      input_tokens: liveSession?.codexInputTokens ?? 0,
+      output_tokens: liveSession?.codexOutputTokens ?? 0,
+      total_tokens: liveSession?.codexTotalTokens ?? 0,
+      ...(liveSession?.codexCacheReadTokens
+        ? { cache_read_tokens: liveSession.codexCacheReadTokens }
+        : {}),
+      ...(liveSession?.codexCacheWriteTokens
+        ? { cache_write_tokens: liveSession.codexCacheWriteTokens }
+        : {}),
+      ...(liveSession?.codexNoCacheTokens
+        ? { no_cache_tokens: liveSession.codexNoCacheTokens }
+        : {}),
+      ...(liveSession?.codexReasoningTokens
+        ? { reasoning_tokens: liveSession.codexReasoningTokens }
+        : {}),
+      turns_used: liveSession?.turnCount ?? 0,
+      total_input_tokens: liveSession?.totalStageInputTokens ?? 0,
+      total_output_tokens: liveSession?.totalStageOutputTokens ?? 0,
+      total_total_tokens: liveSession?.totalStageTotalTokens ?? 0,
+      ...(liveSession?.totalStageCacheReadTokens
+        ? { total_cache_read_tokens: liveSession.totalStageCacheReadTokens }
+        : {}),
+      ...(liveSession?.totalStageCacheWriteTokens
+        ? { total_cache_write_tokens: liveSession.totalStageCacheWriteTokens }
+        : {}),
+      turn_count: liveSession?.turnCount ?? 0,
+      duration_ms: durationMs,
+      outcome: input.outcome === "normal" ? "completed" : "failed",
+    });
+
     if (execution.stopRequest?.cleanupWorkspace === true) {
       await this.workspaceManager.removeForIssue(execution.issueId);
     }
+
+    const lastTurnMessage = execution.lastResult?.lastTurn?.message;
+    const fallbackMessage = execution.lastResult?.liveSession?.lastCodexMessage;
+    const agentMessage =
+      (lastTurnMessage !== null &&
+      lastTurnMessage !== undefined &&
+      lastTurnMessage !== ""
+        ? lastTurnMessage
+        : fallbackMessage !== null &&
+            fallbackMessage !== undefined &&
+            fallbackMessage !== ""
+          ? fallbackMessage
+          : undefined) ?? undefined;
 
     this.orchestrator.onWorkerExit({
       issueId: execution.issueId,
       outcome: input.outcome,
       ...(input.reason === undefined ? {} : { reason: input.reason }),
       endedAt: input.endedAt ?? this.now(),
+      ...(agentMessage === undefined || agentMessage === null
+        ? {}
+        : { agentMessage }),
     });
   }
 
@@ -502,6 +678,7 @@ export async function startRuntimeService(
   const exitPromise = createExitPromise();
   let pollTimer: NodeJS.Timeout | null = null;
   let shuttingDown = false;
+  let pendingExitCode = 0;
 
   const scheduleNextPoll = () => {
     if (stopController.signal.aborted) {
@@ -515,14 +692,16 @@ export async function startRuntimeService(
 
   const runPollCycle = async () => {
     try {
+      const pollStart = Date.now();
       const result = await runtimeHost.pollOnce();
-      await logPollCycleResult(logger, result);
+      const durationMs = Date.now() - pollStart;
+      await logPollCycleResult(logger, result, durationMs);
       scheduleNextPoll();
     } catch (error) {
       await logger.error("runtime_poll_failed", toErrorMessage(error), {
         error_code: ERROR_CODES.cliStartupFailed,
       });
-      resolveExit(exitPromise, 1);
+      pendingExitCode = 1;
       void shutdown();
     }
   };
@@ -531,7 +710,6 @@ export async function startRuntimeService(
     void logger.info("runtime_shutdown_signal", `received ${signal}`, {
       reason: signal,
     });
-    resolveExit(exitPromise, 0);
     void shutdown();
   };
 
@@ -603,13 +781,15 @@ export async function startRuntimeService(
       : options.workflowWatcher;
   workflowWatcher?.start();
 
+  const shutdownTimeoutMs =
+    options.shutdownTimeoutMs ?? SHUTDOWN_IDLE_TIMEOUT_MS;
+
   const shutdown = async () => {
     if (shuttingDown) {
       await exitPromise.closed;
       return;
     }
     shuttingDown = true;
-    resolveExit(exitPromise, 0);
     stopController.abort();
 
     if (pollTimer !== null) {
@@ -619,16 +799,44 @@ export async function startRuntimeService(
 
     removeSignalHandlers();
 
+    const shutdownStart = Date.now();
+    const workersAborted = runtimeHost.abortAllWorkers();
+
+    let timedOut = false;
+    const idleOrTimeout = new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        timedOut = true;
+        void logger.warn(
+          "shutdown_idle_timeout",
+          "Timed out waiting for workers to become idle; proceeding with exit.",
+          { timeout_ms: shutdownTimeoutMs },
+        );
+        resolve();
+      }, shutdownTimeoutMs);
+      void runtimeHost.waitForIdle().then(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+
     await Promise.allSettled([
-      runtimeHost.waitForIdle(),
+      idleOrTimeout,
       dashboard?.close() ?? Promise.resolve(),
       workflowWatcher?.close() ?? Promise.resolve(),
     ]);
 
+    await logger.info("shutdown_complete", "Shutdown complete.", {
+      workers_aborted: workersAborted,
+      timed_out: timedOut,
+      duration_ms: Date.now() - shutdownStart,
+    });
+
+    resolveExit(exitPromise, pendingExitCode);
     resolveClosed(exitPromise);
   };
 
   await logger.info("runtime_starting", "Symphony runtime started.", {
+    symphony_version: getDisplayVersion(),
     poll_interval_ms: currentConfig.polling.intervalMs,
     max_concurrent_agents: currentConfig.agent.maxConcurrentAgents,
     ...(dashboard === null ? {} : { port: dashboard.port }),
@@ -650,6 +858,7 @@ export async function startRuntimeService(
 async function logPollCycleResult(
   logger: StructuredLogger,
   result: Awaited<ReturnType<OrchestratorRuntimeHost["pollOnce"]>>,
+  durationMs: number,
 ): Promise<void> {
   if (!result.validation.ok) {
     await logger.error(
@@ -682,6 +891,13 @@ async function logPollCycleResult(
       },
     );
   }
+
+  await logger.info("poll_tick_completed", "Poll tick completed.", {
+    dispatched_count: result.dispatchedIssueIds.length,
+    running_count: result.runningCount,
+    reconciled_stop_requests: result.stopRequests.length,
+    duration_ms: durationMs,
+  });
 }
 
 async function createRuntimeWorkflowWatcher(input: {
@@ -908,14 +1124,33 @@ async function logAgentEvent(
     session_id: event.sessionId ?? null,
     thread_id: event.threadId ?? null,
     turn_id: event.turnId ?? null,
+    turn_number: event.turnCount,
     attempt: event.attempt,
     workspace_path: event.workspacePath,
+    ...(event.promptChars !== undefined
+      ? { prompt_chars: event.promptChars }
+      : {}),
+    ...(event.estimatedPromptTokens !== undefined
+      ? { estimated_prompt_tokens: event.estimatedPromptTokens }
+      : {}),
     ...(event.usage === undefined
       ? {}
       : {
           input_tokens: event.usage.inputTokens,
           output_tokens: event.usage.outputTokens,
           total_tokens: event.usage.totalTokens,
+          ...(event.usage.cacheReadTokens !== undefined
+            ? { cache_read_tokens: event.usage.cacheReadTokens }
+            : {}),
+          ...(event.usage.cacheWriteTokens !== undefined
+            ? { cache_write_tokens: event.usage.cacheWriteTokens }
+            : {}),
+          ...(event.usage.noCacheTokens !== undefined
+            ? { no_cache_tokens: event.usage.noCacheTokens }
+            : {}),
+          ...(event.usage.reasoningTokens !== undefined
+            ? { reasoning_tokens: event.usage.reasoningTokens }
+            : {}),
         }),
   });
 }
@@ -994,7 +1229,7 @@ function toRetryIssueDetail(
     running: null,
     retry: {
       attempt: retry.attempt,
-      due_at: new Date(retry.dueAtMs).toISOString(),
+      due_at: formatEasternTimestamp(new Date(retry.dueAtMs)),
       error: retry.error,
     },
     logs: {
