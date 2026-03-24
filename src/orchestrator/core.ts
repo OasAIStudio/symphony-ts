@@ -140,6 +140,17 @@ export class OrchestratorCore {
 
   private readonly state: OrchestratorState;
 
+  /**
+   * Snapshot of execution history captured after the final stage record is
+   * appended but before advanceStage() deletes issueExecutionHistory.
+   * This prevents the runtime-host from falling back to stale preHistory
+   * when a terminal transition clears the canonical history.
+   */
+  private readonly lastExitHistorySnapshot: Map<
+    string,
+    import("../domain/model.js").ExecutionHistory
+  > = new Map();
+
   constructor(options: OrchestratorCoreOptions) {
     this.config = options.config;
     this.tracker = options.tracker;
@@ -159,6 +170,21 @@ export class OrchestratorCore {
 
   getState(): OrchestratorState {
     return this.state;
+  }
+
+  /**
+   * Retrieve and consume the execution history snapshot captured during the
+   * most recent onWorkerExit call for the given issue. Returns undefined if
+   * no snapshot exists (e.g., the exit did not append a stage record).
+   */
+  consumeExitHistorySnapshot(
+    issueId: string,
+  ): import("../domain/model.js").ExecutionHistory | undefined {
+    const snapshot = this.lastExitHistorySnapshot.get(issueId);
+    if (snapshot !== undefined) {
+      this.lastExitHistorySnapshot.delete(issueId);
+    }
+    return snapshot;
   }
 
   updateConfig(config: ResolvedWorkflowConfig): void {
@@ -436,6 +462,10 @@ export class OrchestratorCore {
         this.state.issueExecutionHistory[input.issueId] = history;
       }
       history.push(stageRecord);
+
+      // Snapshot history after the push so runtime-host can read it even if
+      // advanceStage() deletes issueExecutionHistory for terminal transitions.
+      this.lastExitHistorySnapshot.set(input.issueId, [...history]);
     }
 
     if (input.outcome === "normal") {

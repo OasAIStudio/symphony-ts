@@ -619,13 +619,14 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
         : { agentMessage }),
     });
 
-    // Re-read execution history after onWorkerExit appended the final stage record.
-    // For terminal cases (completed/failed), history is preserved.
-    // For continuations, history is deleted — but we don't notify on continuations.
+    // Use the history snapshot captured inside onWorkerExit (after the stage
+    // record push but before advanceStage deletes issueExecutionHistory for
+    // terminal transitions). Fall back to the state map for non-terminal cases,
+    // then to preHistory as a last resort.
     const postHistory: ExecutionHistory = [
-      ...(this.orchestrator.getState().issueExecutionHistory[
-        execution.issueId
-      ] ?? preHistory),
+      ...(this.orchestrator.consumeExitHistorySnapshot(execution.issueId) ??
+        this.orchestrator.getState().issueExecutionHistory[execution.issueId] ??
+        preHistory),
     ];
 
     // Fire notifications after state update

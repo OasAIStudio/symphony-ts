@@ -1235,6 +1235,193 @@ describe("pipeline notifications", () => {
     });
   });
 
+  it("includes final stage record in executionHistory for single-stage terminal completion", async () => {
+    const tracker = createTracker();
+    const fakeRunner = new FakeAgentRunner();
+    const notifier = createMockNotifier();
+    const host = new OrchestratorRuntimeHost({
+      config: createStagedConfig({
+        stages: {
+          initialStage: "implement",
+          fastTrack: null,
+          stages: {
+            implement: {
+              type: "agent",
+              runner: null,
+              model: null,
+              prompt: null,
+              maxTurns: null,
+              timeoutMs: null,
+              concurrency: null,
+              gateType: null,
+              maxRework: null,
+              reviewers: [],
+              transitions: {
+                onComplete: "done",
+                onApprove: null,
+                onRework: null,
+              },
+              linearState: null,
+            },
+            done: {
+              type: "terminal",
+              runner: null,
+              model: null,
+              prompt: null,
+              maxTurns: null,
+              timeoutMs: null,
+              concurrency: null,
+              gateType: null,
+              maxRework: null,
+              reviewers: [],
+              transitions: {
+                onComplete: null,
+                onApprove: null,
+                onRework: null,
+              },
+              linearState: null,
+            },
+          },
+        },
+      }),
+      tracker,
+      notifier,
+      createAgentRunner: ({ onEvent }) => {
+        fakeRunner.onEvent = onEvent;
+        return fakeRunner;
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    await host.pollOnce();
+    fakeRunner.resolve("1", createNormalResult());
+    await host.waitForIdle();
+
+    expect(notifier.events).toHaveLength(1);
+    const event = notifier.events[0]!;
+    expect(event.type).toBe("issue_completed");
+    // The history must contain the final stage record — not be empty
+    const completed = event as Extract<
+      PipelineNotificationEvent,
+      { type: "issue_completed" }
+    >;
+    expect(completed.executionHistory).toHaveLength(1);
+    expect(completed.executionHistory[0]).toMatchObject({
+      stageName: "implement",
+      outcome: "normal",
+    });
+  });
+
+  it("includes all stage records in executionHistory for multi-stage terminal completion", async () => {
+    const tracker = createTracker();
+    const fakeRunner = new FakeAgentRunner();
+    const notifier = createMockNotifier();
+    const host = new OrchestratorRuntimeHost({
+      config: createStagedConfig({
+        stages: {
+          initialStage: "investigate",
+          fastTrack: null,
+          stages: {
+            investigate: {
+              type: "agent",
+              runner: null,
+              model: null,
+              prompt: null,
+              maxTurns: null,
+              timeoutMs: null,
+              concurrency: null,
+              gateType: null,
+              maxRework: null,
+              reviewers: [],
+              transitions: {
+                onComplete: "implement",
+                onApprove: null,
+                onRework: null,
+              },
+              linearState: null,
+            },
+            implement: {
+              type: "agent",
+              runner: null,
+              model: null,
+              prompt: null,
+              maxTurns: null,
+              timeoutMs: null,
+              concurrency: null,
+              gateType: null,
+              maxRework: null,
+              reviewers: [],
+              transitions: {
+                onComplete: "done",
+                onApprove: null,
+                onRework: null,
+              },
+              linearState: null,
+            },
+            done: {
+              type: "terminal",
+              runner: null,
+              model: null,
+              prompt: null,
+              maxTurns: null,
+              timeoutMs: null,
+              concurrency: null,
+              gateType: null,
+              maxRework: null,
+              reviewers: [],
+              transitions: {
+                onComplete: null,
+                onApprove: null,
+                onRework: null,
+              },
+              linearState: null,
+            },
+          },
+        },
+      }),
+      tracker,
+      notifier,
+      createAgentRunner: ({ onEvent }) => {
+        fakeRunner.onEvent = onEvent;
+        return fakeRunner;
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    // Stage 1: investigate → completes, advances to implement (continuation)
+    await host.pollOnce();
+    fakeRunner.resolve("1", createNormalResult());
+    await host.waitForIdle();
+
+    // No completion notification yet — stage continuation
+    expect(notifier.events).toHaveLength(0);
+
+    // Stage 2: fire the continuation retry timer to dispatch "implement"
+    const retryResult = await host.runRetryTimer("1");
+    // The retry timer should have dispatched the worker
+    expect(retryResult.dispatched).toBe(true);
+    fakeRunner.resolve("1", createNormalResult());
+    await host.waitForIdle();
+
+    // Now we should see the terminal completion
+    expect(notifier.events).toHaveLength(1);
+    const event = notifier.events[0]!;
+    expect(event.type).toBe("issue_completed");
+    // History must include records from BOTH stages
+    const completed = event as Extract<
+      PipelineNotificationEvent,
+      { type: "issue_completed" }
+    >;
+    expect(completed.executionHistory).toHaveLength(2);
+    expect(completed.executionHistory[0]).toMatchObject({
+      stageName: "investigate",
+    });
+    expect(completed.executionHistory[1]).toMatchObject({
+      stageName: "implement",
+      outcome: "normal",
+    });
+  });
+
   it("does NOT fire issue_completed on stage continuation", async () => {
     const tracker = createTracker();
     const fakeRunner = new FakeAgentRunner();
