@@ -87,29 +87,14 @@ export function applyCodexEventToSession(
     session.lastReportedTotalTokens = 0;
   }
 
-  if (event.event === "approval_auto_approved" && event.raw != null) {
-    const raw =
-      typeof event.raw === "object" && !Array.isArray(event.raw)
-        ? (event.raw as Record<string, unknown>)
-        : null;
-    if (raw !== null) {
-      const toolName = extractToolNameFromRaw(raw);
-      if (toolName !== null) {
-        const toolInput = extractToolInputFromRaw(raw);
-        const context = buildActivityContext(toolName, toolInput);
-        const activityEntry: RecentActivityEntry = {
-          timestamp: event.timestamp,
-          toolName,
-          context,
-        };
-        session.recentActivity.push(activityEntry);
-        if (session.recentActivity.length > RECENT_ACTIVITY_MAX_SIZE) {
-          session.recentActivity.splice(
-            0,
-            session.recentActivity.length - RECENT_ACTIVITY_MAX_SIZE,
-          );
-        }
-      }
+  const activityEntry = buildRecentActivityEntry(event);
+  if (activityEntry !== null) {
+    session.recentActivity.push(activityEntry);
+    if (session.recentActivity.length > RECENT_ACTIVITY_MAX_SIZE) {
+      session.recentActivity.splice(
+        0,
+        session.recentActivity.length - RECENT_ACTIVITY_MAX_SIZE,
+      );
     }
   }
 
@@ -351,7 +336,115 @@ export function extractToolInputFromRaw(raw: Record<string, unknown>): unknown {
   return undefined;
 }
 
+const NOTIFICATION_CONTEXT_MAX_LENGTH = 80;
 const BASH_COMMAND_MAX_LENGTH = 60;
+
+/**
+ * Build a RecentActivityEntry from a CodexClientEvent, or return null if the
+ * event type should not produce an activity entry.
+ */
+function buildRecentActivityEntry(
+  event: CodexClientEvent,
+): RecentActivityEntry | null {
+  // Tool-call events: extract tool name + context from raw payload
+  if (
+    (event.event === "approval_auto_approved" ||
+      event.event === "unsupported_tool_call") &&
+    event.raw != null
+  ) {
+    const raw =
+      typeof event.raw === "object" && !Array.isArray(event.raw)
+        ? (event.raw as Record<string, unknown>)
+        : null;
+    if (raw !== null) {
+      const toolName = extractToolNameFromRaw(raw);
+      if (toolName !== null) {
+        const toolInput = extractToolInputFromRaw(raw);
+        const context = buildActivityContext(toolName, toolInput);
+        const entry: RecentActivityEntry = {
+          timestamp: event.timestamp,
+          toolName,
+          context,
+        };
+        if (event.usage !== undefined) {
+          const total = normalizeAbsoluteCounter(event.usage.totalTokens);
+          if (total > 0) {
+            entry.totalTokens = total;
+          }
+        }
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  // Turn outcome events: show turn result with optional token count
+  if (event.event === "turn_completed" || event.event === "turn_failed") {
+    const label =
+      event.event === "turn_completed" ? "Turn completed" : "Turn failed";
+    const entry: RecentActivityEntry = {
+      timestamp: event.timestamp,
+      toolName: label,
+      context: null,
+    };
+    if (event.usage !== undefined) {
+      const total = normalizeAbsoluteCounter(event.usage.totalTokens);
+      if (total > 0) {
+        entry.totalTokens = total;
+      }
+    }
+    return entry;
+  }
+
+  // Session started
+  if (event.event === "session_started") {
+    return {
+      timestamp: event.timestamp,
+      toolName: "Session started",
+      context: null,
+    };
+  }
+
+  // Notification: use event.message (truncated) as context
+  if (event.event === "notification") {
+    let context: string | null = null;
+    if (event.message !== undefined && event.message.trim().length > 0) {
+      const trimmed = event.message.trim();
+      if (trimmed.length <= NOTIFICATION_CONTEXT_MAX_LENGTH) {
+        context = trimmed;
+      } else {
+        context = `${trimmed.slice(0, NOTIFICATION_CONTEXT_MAX_LENGTH)}…`;
+      }
+    }
+    return { timestamp: event.timestamp, toolName: "Notification", context };
+  }
+
+  return null;
+}
+
+/**
+ * Add a pipeline-level (non-CC) activity entry to a session's recentActivity.
+ * Used by the orchestrator to record stage transitions, state changes, and
+ * session start events so the activity feed is never empty.
+ */
+export function addPipelineActivity(
+  session: LiveSession,
+  eventType: string,
+  description: string,
+): void {
+  const entry: RecentActivityEntry = {
+    timestamp: new Date().toISOString(),
+    toolName: eventType,
+    context: description,
+  };
+  session.recentActivity.push(entry);
+  if (session.recentActivity.length > RECENT_ACTIVITY_MAX_SIZE) {
+    session.recentActivity.splice(
+      0,
+      session.recentActivity.length - RECENT_ACTIVITY_MAX_SIZE,
+    );
+  }
+}
 
 export function buildActivityContext(
   toolName: string,

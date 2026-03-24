@@ -10,6 +10,10 @@ import { loadWorkflowDefinition } from "../config/workflow-loader.js";
 import { ERROR_CODES } from "../errors/codes.js";
 import { formatEasternTimestamp } from "../logging/format-timestamp.js";
 import {
+  PipelineNotifier,
+  createSlackPoster,
+} from "../orchestrator/pipeline-notifier.js";
+import {
   type RuntimeServiceHandle,
   startRuntimeService,
 } from "../orchestrator/runtime-host.js";
@@ -158,9 +162,20 @@ export function applyCliOverrides(
 export async function startCliHost(
   input: StartCliHostInput,
 ): Promise<RuntimeServiceHandle> {
+  const slackChannel = input.runtime.config.server.slackNotifyChannel;
+  const slackToken = process.env.SLACK_BOT_TOKEN;
+  const notifier =
+    slackChannel !== null && slackToken !== undefined
+      ? new PipelineNotifier({
+          channel: slackChannel,
+          poster: createSlackPoster({ botToken: slackToken }),
+        })
+      : null;
+
   return startRuntimeService({
     config: input.runtime.config,
     logsRoot: input.runtime.logsRoot,
+    notifier,
   });
 }
 

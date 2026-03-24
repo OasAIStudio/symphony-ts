@@ -1038,7 +1038,7 @@ function createConfig(overrides?: {
       readTimeoutMs: 30_000,
       stallTimeoutMs: 300_000,
     },
-    server: { port: null },
+    server: { port: null, slackNotifyChannel: null },
     observability: {
       dashboardEnabled: true,
       refreshMs: 1_000,

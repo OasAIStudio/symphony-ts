@@ -100,17 +100,19 @@ export function buildRuntimeSnapshot(
       );
       const totalPipelineTokens =
         completedStageTokens + entry.totalStageTotalTokens;
+      const pipelineStage = state.issueStages[entry.issue.id] ?? null;
       const { health, health_reason } = classifyHealth(
         entry.lastCodexTimestamp,
         tokensPerTurn,
         now,
+        pipelineStage,
       );
       const row: RuntimeSnapshotRunningRow = {
         issue_id: entry.issue.id,
         issue_identifier: entry.identifier,
         issue_title: entry.issue.title,
         state: entry.issue.state,
-        pipeline_stage: state.issueStages[entry.issue.id] ?? null,
+        pipeline_stage: pipelineStage,
         activity_summary: entry.lastCodexMessage,
         session_id: entry.sessionId,
         turn_count: entry.turnCount,
@@ -187,22 +189,47 @@ function toSnapshotCodexTotals(
   };
 }
 
-const STALL_THRESHOLD_SECONDS = 120;
+/** Per-stage default stall thresholds in seconds. */
+export const STAGE_STALL_THRESHOLDS: Record<string, number> = {
+  investigate: 600,
+  implement: 480,
+  review: 600,
+  merge: 300,
+};
+
+const DEFAULT_STALL_THRESHOLD_SECONDS = 480;
 const HIGH_TOKEN_BURN_THRESHOLD = 20_000;
+
+export function getStallThreshold(stageName: string | null): number {
+  if (stageName !== null && stageName in STAGE_STALL_THRESHOLDS) {
+    return STAGE_STALL_THRESHOLDS[stageName] ?? DEFAULT_STALL_THRESHOLD_SECONDS;
+  }
+  return DEFAULT_STALL_THRESHOLD_SECONDS;
+}
 
 function classifyHealth(
   lastEventAt: string | null,
   tokensPerTurn: number,
   now: Date,
+  stageName: string | null,
 ): { health: HealthStatus; health_reason: string | null } {
   if (lastEventAt !== null) {
     const lastEventMs = Date.parse(lastEventAt);
     if (Number.isFinite(lastEventMs)) {
       const secondsSinceEvent = (now.getTime() - lastEventMs) / 1000;
-      if (secondsSinceEvent > STALL_THRESHOLD_SECONDS) {
+      const threshold = getStallThreshold(stageName);
+      const stageLabel = stageName ?? "unknown";
+
+      if (secondsSinceEvent > threshold * 0.8) {
         return {
           health: "red",
-          health_reason: `stalled: no activity for ${Math.floor(secondsSinceEvent)}s`,
+          health_reason: `stalled: no activity for ${Math.floor(secondsSinceEvent)}s (${stageLabel} stage, threshold ${threshold}s)`,
+        };
+      }
+      if (secondsSinceEvent > threshold * 0.5) {
+        return {
+          health: "yellow",
+          health_reason: `slow: no activity for ${Math.floor(secondsSinceEvent)}s (${stageLabel} stage, threshold ${threshold}s)`,
         };
       }
     }

@@ -10,8 +10,10 @@ import {
   type StructuredLogEntry,
   StructuredLogger,
 } from "../../src/logging/structured-logger.js";
+import type { PipelineNotificationEvent } from "../../src/orchestrator/pipeline-notifier.js";
 import {
   OrchestratorRuntimeHost,
+  extractProductName,
   startRuntimeService,
 } from "../../src/orchestrator/runtime-host.js";
 import type {
@@ -1152,6 +1154,418 @@ describe("startRuntimeService poll_tick_completed", () => {
   });
 });
 
+describe("pipeline notifications", () => {
+  function createMockNotifier() {
+    const events: PipelineNotificationEvent[] = [];
+    return {
+      events,
+      notify(event: PipelineNotificationEvent) {
+        events.push(event);
+      },
+    };
+  }
+
+  it("fires issue_completed on terminal completion", async () => {
+    const tracker = createTracker();
+    const fakeRunner = new FakeAgentRunner();
+    const notifier = createMockNotifier();
+    const host = new OrchestratorRuntimeHost({
+      config: createStagedConfig({
+        stages: {
+          initialStage: "implement",
+          fastTrack: null,
+          stages: {
+            implement: {
+              type: "agent",
+              runner: null,
+              model: null,
+              prompt: null,
+              maxTurns: null,
+              timeoutMs: null,
+              concurrency: null,
+              gateType: null,
+              maxRework: null,
+              reviewers: [],
+              transitions: {
+                onComplete: "done",
+                onApprove: null,
+                onRework: null,
+              },
+              linearState: null,
+            },
+            done: {
+              type: "terminal",
+              runner: null,
+              model: null,
+              prompt: null,
+              maxTurns: null,
+              timeoutMs: null,
+              concurrency: null,
+              gateType: null,
+              maxRework: null,
+              reviewers: [],
+              transitions: {
+                onComplete: null,
+                onApprove: null,
+                onRework: null,
+              },
+              linearState: null,
+            },
+          },
+        },
+      }),
+      tracker,
+      notifier,
+      createAgentRunner: ({ onEvent }) => {
+        fakeRunner.onEvent = onEvent;
+        return fakeRunner;
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    await host.pollOnce();
+    fakeRunner.resolve("1", createNormalResult());
+    await host.waitForIdle();
+
+    expect(notifier.events).toHaveLength(1);
+    expect(notifier.events[0]).toMatchObject({
+      type: "issue_completed",
+      issueIdentifier: "ISSUE-1",
+      issueTitle: "Issue 1",
+    });
+  });
+
+  it("does NOT fire issue_completed on stage continuation", async () => {
+    const tracker = createTracker();
+    const fakeRunner = new FakeAgentRunner();
+    const notifier = createMockNotifier();
+    const host = new OrchestratorRuntimeHost({
+      config: createStagedConfig({
+        stages: {
+          initialStage: "investigate",
+          fastTrack: null,
+          stages: {
+            investigate: {
+              type: "agent",
+              runner: null,
+              model: null,
+              prompt: null,
+              maxTurns: null,
+              timeoutMs: null,
+              concurrency: null,
+              gateType: null,
+              maxRework: null,
+              reviewers: [],
+              transitions: {
+                onComplete: "implement",
+                onApprove: null,
+                onRework: null,
+              },
+              linearState: null,
+            },
+            implement: {
+              type: "agent",
+              runner: null,
+              model: null,
+              prompt: null,
+              maxTurns: null,
+              timeoutMs: null,
+              concurrency: null,
+              gateType: null,
+              maxRework: null,
+              reviewers: [],
+              transitions: {
+                onComplete: "done",
+                onApprove: null,
+                onRework: null,
+              },
+              linearState: null,
+            },
+            done: {
+              type: "terminal",
+              runner: null,
+              model: null,
+              prompt: null,
+              maxTurns: null,
+              timeoutMs: null,
+              concurrency: null,
+              gateType: null,
+              maxRework: null,
+              reviewers: [],
+              transitions: {
+                onComplete: null,
+                onApprove: null,
+                onRework: null,
+              },
+              linearState: null,
+            },
+          },
+        },
+      }),
+      tracker,
+      notifier,
+      createAgentRunner: ({ onEvent }) => {
+        fakeRunner.onEvent = onEvent;
+        return fakeRunner;
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    await host.pollOnce();
+    fakeRunner.resolve("1", createNormalResult());
+    await host.waitForIdle();
+
+    // Stage advanced from investigate → implement, scheduled continuation retry.
+    // No notification should fire.
+    expect(notifier.events).toHaveLength(0);
+  });
+
+  it("fires issue_failed when retries are exhausted", async () => {
+    const tracker = createTracker();
+    const fakeRunner = new FakeAgentRunner();
+    const notifier = createMockNotifier();
+    const host = new OrchestratorRuntimeHost({
+      config: {
+        ...createConfig(),
+        agent: { ...createConfig().agent, maxRetryAttempts: 0 },
+      },
+      tracker,
+      notifier,
+      createAgentRunner: ({ onEvent }) => {
+        fakeRunner.onEvent = onEvent;
+        return fakeRunner;
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    await host.pollOnce();
+    fakeRunner.reject("1", new Error("agent crashed"));
+    await host.waitForIdle();
+
+    expect(notifier.events).toHaveLength(1);
+    expect(notifier.events[0]).toMatchObject({
+      type: "issue_failed",
+      issueIdentifier: "ISSUE-1",
+      retriesExhausted: true,
+    });
+  });
+
+  it("fires stall_killed when a stall timeout aborts a worker", async () => {
+    const tracker = createTracker();
+    const fakeRunner = new FakeAgentRunner();
+    const notifier = createMockNotifier();
+    const host = new OrchestratorRuntimeHost({
+      config: createConfig(),
+      tracker,
+      notifier,
+      createAgentRunner: ({ onEvent }) => {
+        fakeRunner.onEvent = onEvent;
+        return fakeRunner;
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    await host.pollOnce();
+
+    // Simulate the stall timeout triggering reconcileStalledRuns → stopRunningIssue
+    tracker.setStateSnapshots([
+      { id: "1", identifier: "ISSUE-1", state: "In Progress" },
+    ]);
+    const reconcileTick = await host.pollOnce();
+
+    // Manually mark this as a stall_timeout stop request to simulate the flow
+    // biome-ignore lint/suspicious/noExplicitAny: accessing private field for test setup
+    const worker = (host as any).workers.get("1");
+    if (worker) {
+      worker.stopRequest = {
+        issueId: "1",
+        issueIdentifier: "ISSUE-1",
+        cleanupWorkspace: false,
+        reason: "stall_timeout",
+      };
+      worker.controller.abort("Stopped due to stall_timeout.");
+    }
+    await host.waitForIdle();
+
+    const stallEvents = notifier.events.filter(
+      (e) => e.type === "stall_killed",
+    );
+    expect(stallEvents).toHaveLength(1);
+    expect(stallEvents[0]).toMatchObject({
+      type: "stall_killed",
+      issueIdentifier: "ISSUE-1",
+    });
+  });
+
+  it("fires infra_error when worker exits abnormally with 0 turns", async () => {
+    const tracker = createTracker();
+    const fakeRunner = new FakeAgentRunner();
+    const notifier = createMockNotifier();
+    const host = new OrchestratorRuntimeHost({
+      config: createConfig(),
+      tracker,
+      notifier,
+      createAgentRunner: ({ onEvent }) => {
+        fakeRunner.onEvent = onEvent;
+        return fakeRunner;
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    await host.pollOnce();
+    // Reject immediately — no turns completed, no session events
+    fakeRunner.reject("1", new Error("Failed to start agent process"));
+    await host.waitForIdle();
+
+    const infraEvents = notifier.events.filter((e) => e.type === "infra_error");
+    expect(infraEvents).toHaveLength(1);
+    expect(infraEvents[0]).toMatchObject({
+      type: "infra_error",
+      issueIdentifier: "ISSUE-1",
+      errorReason: "Failed to start agent process",
+    });
+  });
+
+  it("does not fire infra_error when worker exits abnormally with turns completed", async () => {
+    const tracker = createTracker();
+    const fakeRunner = new FakeAgentRunner();
+    const notifier = createMockNotifier();
+    const host = new OrchestratorRuntimeHost({
+      config: createConfig(),
+      tracker,
+      notifier,
+      createAgentRunner: ({ onEvent }) => {
+        fakeRunner.onEvent = onEvent;
+        return fakeRunner;
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    await host.pollOnce();
+    // Emit session_started (increments turnCount to 1) then turn_completed
+    fakeRunner.emit("1", {
+      event: "session_started",
+      timestamp: "2026-03-06T00:00:01.000Z",
+      codexAppServerPid: "1001",
+      sessionId: "thread-1-turn-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+    });
+    fakeRunner.emit("1", {
+      event: "turn_completed",
+      timestamp: "2026-03-06T00:00:02.000Z",
+      codexAppServerPid: "1001",
+      sessionId: "thread-1-turn-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      message: "turn done",
+    });
+    await host.flushEvents();
+
+    fakeRunner.reject("1", new Error("agent crashed mid-run"));
+    await host.waitForIdle();
+
+    const infraEvents = notifier.events.filter((e) => e.type === "infra_error");
+    expect(infraEvents).toHaveLength(0);
+  });
+
+  it("fires no notification when notifier is null", async () => {
+    const tracker = createTracker();
+    const fakeRunner = new FakeAgentRunner();
+    // No notifier passed — should not throw
+    const host = new OrchestratorRuntimeHost({
+      config: createConfig(),
+      tracker,
+      createAgentRunner: ({ onEvent }) => {
+        fakeRunner.onEvent = onEvent;
+        return fakeRunner;
+      },
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    await host.pollOnce();
+    fakeRunner.reject("1", new Error("crash"));
+    await host.waitForIdle();
+
+    // If we got here without throwing, the test passes
+    expect(host.notifier).toBeNull();
+  });
+});
+
+describe("pipeline notifications in startRuntimeService", () => {
+  it("fires pipeline_started and pipeline_stopped notifications", async () => {
+    const tracker = createTracker({ candidates: [] });
+    const fakeRunner = new FakeAgentRunner();
+    const notifier = createMockNotifierForService();
+    const logger = new StructuredLogger([{ write() {} }]);
+
+    const service = await startRuntimeService({
+      config: createConfig(),
+      tracker,
+      logger,
+      notifier,
+      workflowWatcher: null,
+      runtimeHost: new OrchestratorRuntimeHost({
+        config: createConfig(),
+        tracker,
+        logger,
+        notifier,
+        agentRunner: fakeRunner,
+        now: () => new Date("2026-03-06T00:00:05.000Z"),
+      }),
+    });
+
+    await service.runtimeHost.flushEvents();
+
+    const startedEvents = notifier.events.filter(
+      (e) => e.type === "pipeline_started",
+    );
+    expect(startedEvents).toHaveLength(1);
+    expect(startedEvents[0]).toMatchObject({
+      type: "pipeline_started",
+    });
+
+    await service.shutdown();
+
+    const stoppedEvents = notifier.events.filter(
+      (e) => e.type === "pipeline_stopped",
+    );
+    expect(stoppedEvents).toHaveLength(1);
+    expect(stoppedEvents[0]).toMatchObject({
+      type: "pipeline_stopped",
+      completedCount: 0,
+      failedCount: 0,
+    });
+  });
+
+  function createMockNotifierForService() {
+    const events: PipelineNotificationEvent[] = [];
+    return {
+      events,
+      notify(event: PipelineNotificationEvent) {
+        events.push(event);
+      },
+    };
+  }
+});
+
+describe("extractProductName", () => {
+  it("extracts product name from WORKFLOW-<product>.md pattern", () => {
+    expect(extractProductName("/path/to/WORKFLOW-symphony.md")).toBe(
+      "symphony",
+    );
+  });
+
+  it("returns base name for plain WORKFLOW.md", () => {
+    expect(extractProductName("/path/to/WORKFLOW.md")).toBe("WORKFLOW");
+  });
+
+  it("handles paths without directory separators", () => {
+    expect(extractProductName("WORKFLOW-jony.md")).toBe("jony");
+  });
+});
+
 class FakeAgentRunner {
   onEvent: ((event: AgentRunnerEvent) => void) | undefined;
   readonly runs = new Map<
@@ -1307,6 +1721,7 @@ function createConfig(): ResolvedWorkflowConfig {
     },
     server: {
       port: null,
+      slackNotifyChannel: null,
     },
     observability: {
       dashboardEnabled: true,
@@ -1322,7 +1737,9 @@ function createConfig(): ResolvedWorkflowConfig {
   };
 }
 
-function createStagedConfig(): ResolvedWorkflowConfig {
+function createStagedConfig(
+  overrides?: Partial<ResolvedWorkflowConfig>,
+): ResolvedWorkflowConfig {
   return {
     ...createConfig(),
     stages: {
@@ -1349,5 +1766,57 @@ function createStagedConfig(): ResolvedWorkflowConfig {
         },
       },
     },
+    ...overrides,
+  };
+}
+
+function createNormalResult(): AgentRunResult {
+  return {
+    issue: createIssue({ state: "In Progress" }),
+    workspace: {
+      path: "/tmp/workspaces/1",
+      workspaceKey: "1",
+      createdNow: true,
+    },
+    runAttempt: {
+      issueId: "1",
+      issueIdentifier: "ISSUE-1",
+      attempt: null,
+      workspacePath: "/tmp/workspaces/1",
+      startedAt: "2026-03-06T00:00:00.000Z",
+      status: "succeeded",
+    },
+    liveSession: {
+      sessionId: "thread-1-turn-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      codexAppServerPid: "1001",
+      lastCodexEvent: "turn_completed",
+      lastCodexTimestamp: "2026-03-06T00:00:02.000Z",
+      lastCodexMessage: "done",
+      codexInputTokens: 100,
+      codexOutputTokens: 50,
+      codexTotalTokens: 150,
+      codexCacheReadTokens: 0,
+      codexCacheWriteTokens: 0,
+      codexNoCacheTokens: 0,
+      codexReasoningTokens: 0,
+      codexTotalInputTokens: 100,
+      codexTotalOutputTokens: 50,
+      lastReportedInputTokens: 100,
+      lastReportedOutputTokens: 50,
+      lastReportedTotalTokens: 150,
+      turnCount: 1,
+      totalStageInputTokens: 0,
+      totalStageOutputTokens: 0,
+      totalStageTotalTokens: 0,
+      totalStageCacheReadTokens: 0,
+      totalStageCacheWriteTokens: 0,
+      turnHistory: [],
+      recentActivity: [],
+    },
+    turnsCompleted: 1,
+    lastTurn: null,
+    rateLimits: null,
   };
 }

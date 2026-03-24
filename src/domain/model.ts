@@ -98,6 +98,7 @@ export interface RecentActivityEntry {
   timestamp: string;
   toolName: string;
   context: string | null;
+  totalTokens?: number;
 }
 
 export interface LiveSession {

@@ -130,6 +130,10 @@ export function resolveWorkflowConfig(
     },
     server: {
       port: readNonNegativeInteger(server.port),
+      slackNotifyChannel:
+        readString(server.slack_notify_channel) ??
+        environment.SLACK_NOTIFY_CHANNEL ??
+        null,
     },
     observability: {
       dashboardEnabled:

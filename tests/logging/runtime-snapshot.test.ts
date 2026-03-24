@@ -6,7 +6,11 @@ import {
   createInitialOrchestratorState,
 } from "../../src/domain/model.js";
 import { formatEasternTimestamp } from "../../src/logging/format-timestamp.js";
-import { buildRuntimeSnapshot } from "../../src/logging/runtime-snapshot.js";
+import {
+  STAGE_STALL_THRESHOLDS,
+  buildRuntimeSnapshot,
+  getStallThreshold,
+} from "../../src/logging/runtime-snapshot.js";
 
 describe("runtime snapshot", () => {
   it("includes pipeline_stage and activity_summary in running rows", () => {
@@ -468,13 +472,14 @@ describe("runtime snapshot", () => {
     expect(snapshot.running[0]!.health_reason).toBeNull();
   });
 
-  it("classifies health as red when session is stalled (last_event_at > 120s ago)", () => {
+  it("classifies health as red when session exceeds 80% of stage stall threshold", () => {
     const state = createInitialOrchestratorState({
       pollIntervalMs: 30_000,
       maxConcurrentAgents: 2,
     });
     const now = new Date("2026-03-21T10:05:00.000Z");
-    const stalledTimestamp = new Date(now.getTime() - 121_000).toISOString(); // 121s ago
+    // merge stage has 300s threshold; 80% = 240s. 250s > 240s → red
+    const stalledTimestamp = new Date(now.getTime() - 250_000).toISOString();
     const entry = createRunningEntry({
       issueId: "issue-1",
       identifier: "ABC-1",
@@ -490,11 +495,14 @@ describe("runtime snapshot", () => {
     });
     entry.totalStageTotalTokens = 1_500;
     state.running["issue-1"] = entry;
+    state.issueStages["issue-1"] = "merge";
 
     const snapshot = buildRuntimeSnapshot(state, { now });
 
     expect(snapshot.running[0]!.health).toBe("red");
     expect(snapshot.running[0]!.health_reason).toContain("stalled");
+    expect(snapshot.running[0]!.health_reason).toContain("merge stage");
+    expect(snapshot.running[0]!.health_reason).toContain("threshold 300s");
   });
 
   it("classifies health as yellow when tokens_per_turn exceeds 20000", () => {
@@ -843,6 +851,226 @@ describe("runtime snapshot", () => {
     expect(snapshot.running[0]!.first_dispatched_at).toBe(
       "2026-03-06T10:00:00.000Z",
     );
+  });
+});
+
+describe("getStallThreshold", () => {
+  it("returns stage-specific thresholds for known stages", () => {
+    expect(getStallThreshold("investigate")).toBe(600);
+    expect(getStallThreshold("implement")).toBe(480);
+    expect(getStallThreshold("review")).toBe(600);
+    expect(getStallThreshold("merge")).toBe(300);
+  });
+
+  it("returns default threshold for unknown stages", () => {
+    expect(getStallThreshold("custom-stage")).toBe(480);
+  });
+
+  it("returns default threshold for null stage", () => {
+    expect(getStallThreshold(null)).toBe(480);
+  });
+});
+
+describe("stage-aware health classification", () => {
+  it("classifies health as yellow at 50%+ of investigate stage threshold", () => {
+    const state = createInitialOrchestratorState({
+      pollIntervalMs: 30_000,
+      maxConcurrentAgents: 2,
+    });
+    const now = new Date("2026-03-21T10:05:00.000Z");
+    // investigate threshold=600s; 50% = 300s. 310s > 300s → yellow
+    const timestamp = new Date(now.getTime() - 310_000).toISOString();
+    const entry = createRunningEntry({
+      issueId: "issue-1",
+      identifier: "ABC-1",
+      startedAt: new Date(now.getTime() - 600_000).toISOString(),
+      sessionId: "thread-a-turn-1",
+      lastCodexEvent: "turn_completed",
+      lastCodexTimestamp: timestamp,
+      lastCodexMessage: "Exploring codebase",
+      turnCount: 3,
+      codexInputTokens: 1_000,
+      codexOutputTokens: 500,
+      codexTotalTokens: 1_500,
+    });
+    entry.totalStageTotalTokens = 1_500;
+    state.running["issue-1"] = entry;
+    state.issueStages["issue-1"] = "investigate";
+
+    const snapshot = buildRuntimeSnapshot(state, { now });
+
+    expect(snapshot.running[0]!.health).toBe("yellow");
+    expect(snapshot.running[0]!.health_reason).toContain("investigate stage");
+    expect(snapshot.running[0]!.health_reason).toContain("threshold 600s");
+  });
+
+  it("classifies health as red at 80%+ of investigate stage threshold", () => {
+    const state = createInitialOrchestratorState({
+      pollIntervalMs: 30_000,
+      maxConcurrentAgents: 2,
+    });
+    const now = new Date("2026-03-21T10:05:00.000Z");
+    // investigate threshold=600s; 80% = 480s. 500s > 480s → red
+    const timestamp = new Date(now.getTime() - 500_000).toISOString();
+    const entry = createRunningEntry({
+      issueId: "issue-1",
+      identifier: "ABC-1",
+      startedAt: new Date(now.getTime() - 600_000).toISOString(),
+      sessionId: "thread-a-turn-1",
+      lastCodexEvent: "turn_completed",
+      lastCodexTimestamp: timestamp,
+      lastCodexMessage: "Exploring codebase",
+      turnCount: 3,
+      codexInputTokens: 1_000,
+      codexOutputTokens: 500,
+      codexTotalTokens: 1_500,
+    });
+    entry.totalStageTotalTokens = 1_500;
+    state.running["issue-1"] = entry;
+    state.issueStages["issue-1"] = "investigate";
+
+    const snapshot = buildRuntimeSnapshot(state, { now });
+
+    expect(snapshot.running[0]!.health).toBe("red");
+    expect(snapshot.running[0]!.health_reason).toContain("stalled");
+    expect(snapshot.running[0]!.health_reason).toContain("investigate stage");
+  });
+
+  it("classifies health as green within 50% of implement stage threshold", () => {
+    const state = createInitialOrchestratorState({
+      pollIntervalMs: 30_000,
+      maxConcurrentAgents: 2,
+    });
+    const now = new Date("2026-03-21T10:05:00.000Z");
+    // implement threshold=480s; 50% = 240s. 200s < 240s → green
+    const timestamp = new Date(now.getTime() - 200_000).toISOString();
+    const entry = createRunningEntry({
+      issueId: "issue-1",
+      identifier: "ABC-1",
+      startedAt: new Date(now.getTime() - 600_000).toISOString(),
+      sessionId: "thread-a-turn-1",
+      lastCodexEvent: "turn_completed",
+      lastCodexTimestamp: timestamp,
+      lastCodexMessage: "Writing code",
+      turnCount: 3,
+      codexInputTokens: 1_000,
+      codexOutputTokens: 500,
+      codexTotalTokens: 1_500,
+    });
+    entry.totalStageTotalTokens = 1_500;
+    state.running["issue-1"] = entry;
+    state.issueStages["issue-1"] = "implement";
+
+    const snapshot = buildRuntimeSnapshot(state, { now });
+
+    expect(snapshot.running[0]!.health).toBe("green");
+    expect(snapshot.running[0]!.health_reason).toBeNull();
+  });
+
+  it("uses default threshold for unknown stage names", () => {
+    const state = createInitialOrchestratorState({
+      pollIntervalMs: 30_000,
+      maxConcurrentAgents: 2,
+    });
+    const now = new Date("2026-03-21T10:05:00.000Z");
+    // default threshold=480s; 80% = 384s. 400s > 384s → red
+    const timestamp = new Date(now.getTime() - 400_000).toISOString();
+    const entry = createRunningEntry({
+      issueId: "issue-1",
+      identifier: "ABC-1",
+      startedAt: new Date(now.getTime() - 600_000).toISOString(),
+      sessionId: "thread-a-turn-1",
+      lastCodexEvent: "turn_completed",
+      lastCodexTimestamp: timestamp,
+      lastCodexMessage: "Working",
+      turnCount: 3,
+      codexInputTokens: 1_000,
+      codexOutputTokens: 500,
+      codexTotalTokens: 1_500,
+    });
+    entry.totalStageTotalTokens = 1_500;
+    state.running["issue-1"] = entry;
+    state.issueStages["issue-1"] = "custom-stage";
+
+    const snapshot = buildRuntimeSnapshot(state, { now });
+
+    expect(snapshot.running[0]!.health).toBe("red");
+    expect(snapshot.running[0]!.health_reason).toContain("custom-stage stage");
+    expect(snapshot.running[0]!.health_reason).toContain("threshold 480s");
+  });
+
+  it("uses default threshold when no stage is set", () => {
+    const state = createInitialOrchestratorState({
+      pollIntervalMs: 30_000,
+      maxConcurrentAgents: 2,
+    });
+    const now = new Date("2026-03-21T10:05:00.000Z");
+    // default threshold=480s; 50% = 240s. 250s > 240s → yellow
+    const timestamp = new Date(now.getTime() - 250_000).toISOString();
+    const entry = createRunningEntry({
+      issueId: "issue-1",
+      identifier: "ABC-1",
+      startedAt: new Date(now.getTime() - 600_000).toISOString(),
+      sessionId: "thread-a-turn-1",
+      lastCodexEvent: "turn_completed",
+      lastCodexTimestamp: timestamp,
+      lastCodexMessage: "Working",
+      turnCount: 3,
+      codexInputTokens: 1_000,
+      codexOutputTokens: 500,
+      codexTotalTokens: 1_500,
+    });
+    entry.totalStageTotalTokens = 1_500;
+    state.running["issue-1"] = entry;
+    // No issueStages entry → null stage
+
+    const snapshot = buildRuntimeSnapshot(state, { now });
+
+    expect(snapshot.running[0]!.health).toBe("yellow");
+    expect(snapshot.running[0]!.health_reason).toContain("unknown stage");
+    expect(snapshot.running[0]!.health_reason).toContain("threshold 480s");
+  });
+
+  it("health reason includes seconds of inactivity for yellow", () => {
+    const state = createInitialOrchestratorState({
+      pollIntervalMs: 30_000,
+      maxConcurrentAgents: 2,
+    });
+    const now = new Date("2026-03-21T10:05:00.000Z");
+    // review threshold=600s; 50% = 300s. 312s > 300s → yellow
+    const timestamp = new Date(now.getTime() - 312_000).toISOString();
+    const entry = createRunningEntry({
+      issueId: "issue-1",
+      identifier: "ABC-1",
+      startedAt: new Date(now.getTime() - 600_000).toISOString(),
+      sessionId: "thread-a-turn-1",
+      lastCodexEvent: "turn_completed",
+      lastCodexTimestamp: timestamp,
+      lastCodexMessage: "Reviewing",
+      turnCount: 3,
+      codexInputTokens: 1_000,
+      codexOutputTokens: 500,
+      codexTotalTokens: 1_500,
+    });
+    entry.totalStageTotalTokens = 1_500;
+    state.running["issue-1"] = entry;
+    state.issueStages["issue-1"] = "review";
+
+    const snapshot = buildRuntimeSnapshot(state, { now });
+
+    expect(snapshot.running[0]!.health).toBe("yellow");
+    expect(snapshot.running[0]!.health_reason).toBe(
+      "slow: no activity for 312s (review stage, threshold 600s)",
+    );
+  });
+
+  it("STAGE_STALL_THRESHOLDS has expected values", () => {
+    expect(STAGE_STALL_THRESHOLDS).toEqual({
+      investigate: 600,
+      implement: 480,
+      review: 600,
+      merge: 300,
+    });
   });
 });
 

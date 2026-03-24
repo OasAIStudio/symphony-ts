@@ -68,6 +68,7 @@ describe("runtime integration", () => {
         },
         server: {
           port: 0,
+          slackNotifyChannel: null,
         },
       }),
       logsRoot,
@@ -593,6 +594,7 @@ function createConfig(
     },
     server: {
       port: null,
+      slackNotifyChannel: null,
     },
     observability: {
       dashboardEnabled: true,

@@ -391,6 +391,7 @@ function createConfig(overrides?: {
     },
     server: {
       port: null,
+      slackNotifyChannel: null,
     },
     observability: {
       dashboardEnabled: true,

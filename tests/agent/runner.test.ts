@@ -925,6 +925,7 @@ function createConfig(root: string, scenario: string): ResolvedWorkflowConfig {
     },
     server: {
       port: null,
+      slackNotifyChannel: null,
     },
     observability: {
       dashboardEnabled: true,

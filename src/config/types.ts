@@ -48,6 +48,7 @@ export interface WorkflowCodexConfig {
 
 export interface WorkflowServerConfig {
   port: number | null;
+  slackNotifyChannel: string | null;
 }
 
 export interface WorkflowObservabilityConfig {

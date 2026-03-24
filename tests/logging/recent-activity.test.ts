@@ -147,21 +147,21 @@ describe("recent activity ring buffer", () => {
     });
   });
 
-  it("does not populate recentActivity on non-approval events", () => {
+  it("populates recentActivity on notification events", () => {
     const session = createEmptyLiveSession();
 
     const event = createEvent("notification", {
-      raw: {
-        params: {
-          toolName: "Read",
-          input: { file_path: "/repo/src/model.ts" },
-        },
-      },
+      message: "Downloading packages",
     });
 
     applyCodexEventToSession(session, event);
 
-    expect(session.recentActivity).toHaveLength(0);
+    expect(session.recentActivity).toHaveLength(1);
+    expect(session.recentActivity[0]).toEqual({
+      timestamp: "2026-03-21T10:00:01.000Z",
+      toolName: "Notification",
+      context: "Downloading packages",
+    });
   });
 
   it("trims ring buffer to max 10 entries", () => {

@@ -433,6 +433,174 @@ describe("session metrics", () => {
     expect(lastEntry.turnNumber).toBe(54);
   });
 
+  describe("broadened recentActivity tracking", () => {
+    it("tracks unsupported_tool_call events with tool name and context", () => {
+      const session = createEmptyLiveSession();
+      const event = createEvent("unsupported_tool_call", {
+        raw: {
+          params: {
+            toolName: "linear_graphql",
+            input: { query: "{ viewer { id } }" },
+          },
+        },
+      });
+
+      applyCodexEventToSession(session, event);
+
+      expect(session.recentActivity).toHaveLength(1);
+      expect(session.recentActivity[0]!.toolName).toBe("linear_graphql");
+      expect(session.recentActivity[0]!.context).toBeNull();
+    });
+
+    it("tracks turn_completed events with token count", () => {
+      const session = createEmptyLiveSession();
+      const event = createEvent("turn_completed", {
+        usage: {
+          inputTokens: 500,
+          outputTokens: 200,
+          totalTokens: 700,
+        },
+      });
+
+      applyCodexEventToSession(session, event);
+
+      expect(session.recentActivity).toHaveLength(1);
+      expect(session.recentActivity[0]!.toolName).toBe("Turn completed");
+      expect(session.recentActivity[0]!.context).toBeNull();
+      expect(session.recentActivity[0]!.totalTokens).toBe(700);
+    });
+
+    it("tracks turn_completed events without usage", () => {
+      const session = createEmptyLiveSession();
+      const event = createEvent("turn_completed");
+
+      applyCodexEventToSession(session, event);
+
+      expect(session.recentActivity).toHaveLength(1);
+      expect(session.recentActivity[0]!.toolName).toBe("Turn completed");
+      expect(session.recentActivity[0]!.context).toBeNull();
+    });
+
+    it("tracks turn_failed events with token count", () => {
+      const session = createEmptyLiveSession();
+      const event = createEvent("turn_failed", {
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          totalTokens: 150,
+        },
+      });
+
+      applyCodexEventToSession(session, event);
+
+      expect(session.recentActivity).toHaveLength(1);
+      expect(session.recentActivity[0]!.toolName).toBe("Turn failed");
+      expect(session.recentActivity[0]!.context).toBeNull();
+      expect(session.recentActivity[0]!.totalTokens).toBe(150);
+    });
+
+    it("tracks session_started events", () => {
+      const session = createEmptyLiveSession();
+      const event = createEvent("session_started", {
+        sessionId: "s1",
+        threadId: "t1",
+        turnId: "turn-1",
+      });
+
+      applyCodexEventToSession(session, event);
+
+      expect(session.recentActivity).toHaveLength(1);
+      expect(session.recentActivity[0]!.toolName).toBe("Session started");
+      expect(session.recentActivity[0]!.context).toBeNull();
+    });
+
+    it("tracks notification events with message as context", () => {
+      const session = createEmptyLiveSession();
+      const event = createEvent("notification", {
+        message: "Downloading dependencies…",
+      });
+
+      applyCodexEventToSession(session, event);
+
+      expect(session.recentActivity).toHaveLength(1);
+      expect(session.recentActivity[0]!.toolName).toBe("Notification");
+      expect(session.recentActivity[0]!.context).toBe(
+        "Downloading dependencies…",
+      );
+    });
+
+    it("truncates long notification messages", () => {
+      const session = createEmptyLiveSession();
+      const longMessage = "A".repeat(120);
+      const event = createEvent("notification", {
+        message: longMessage,
+      });
+
+      applyCodexEventToSession(session, event);
+
+      expect(session.recentActivity).toHaveLength(1);
+      expect(session.recentActivity[0]!.context).toBe(`${"A".repeat(80)}…`);
+    });
+
+    it("tracks notification events without message", () => {
+      const session = createEmptyLiveSession();
+      const event = createEvent("notification");
+
+      applyCodexEventToSession(session, event);
+
+      expect(session.recentActivity).toHaveLength(1);
+      expect(session.recentActivity[0]!.toolName).toBe("Notification");
+      expect(session.recentActivity[0]!.context).toBeNull();
+    });
+
+    it("still tracks approval_auto_approved events", () => {
+      const session = createEmptyLiveSession();
+      const event = createEvent("approval_auto_approved", {
+        raw: {
+          params: {
+            toolName: "Read",
+            input: { file_path: "/tmp/foo/bar.ts" },
+          },
+        },
+      });
+
+      applyCodexEventToSession(session, event);
+
+      expect(session.recentActivity).toHaveLength(1);
+      expect(session.recentActivity[0]!.toolName).toBe("Read");
+      expect(session.recentActivity[0]!.context).toBe("bar.ts");
+    });
+
+    it("respects RECENT_ACTIVITY_MAX_SIZE of 10 across mixed events", () => {
+      const session = createEmptyLiveSession();
+
+      // Push 12 events of mixed types
+      for (let i = 0; i < 12; i++) {
+        const event =
+          i % 2 === 0
+            ? createEvent("turn_completed", {
+                usage: {
+                  inputTokens: i * 10,
+                  outputTokens: i * 5,
+                  totalTokens: i * 15,
+                },
+                timestamp: `2026-03-06T10:00:${String(i).padStart(2, "0")}.000Z`,
+              })
+            : createEvent("notification", {
+                message: `msg-${i}`,
+                timestamp: `2026-03-06T10:00:${String(i).padStart(2, "0")}.000Z`,
+              });
+        applyCodexEventToSession(session, event);
+      }
+
+      expect(session.recentActivity).toHaveLength(10);
+      // Oldest 2 should have been evicted — first entry timestamp should be index 2
+      expect(session.recentActivity[0]!.timestamp).toBe(
+        "2026-03-06T10:00:02.000Z",
+      );
+    });
+  });
+
   it("summarizes codex events for snapshot and log surfaces", () => {
     expect(
       summarizeCodexEvent(

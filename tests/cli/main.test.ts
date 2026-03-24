@@ -48,6 +48,7 @@ describe("cli", () => {
       createConfig({
         server: {
           port: 3000,
+          slackNotifyChannel: null,
         },
       }),
       {
@@ -282,6 +283,7 @@ function createConfig(
     },
     server: {
       port: null,
+      slackNotifyChannel: null,
     },
     observability: {
       dashboardEnabled: true,

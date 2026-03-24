@@ -65,6 +65,7 @@ describe("config-resolver", () => {
     expect(resolved.observability.renderIntervalMs).toBe(
       DEFAULT_OBSERVABILITY_RENDER_INTERVAL_MS,
     );
+    expect(resolved.server.slackNotifyChannel).toBeNull();
   });
 
   it("coerces env-backed fields, path-like roots, and state limits", () => {
@@ -354,6 +355,71 @@ describe("config-resolver fast_track", () => {
     });
 
     expect(resolved.stages?.fastTrack).toBeNull();
+  });
+
+  it("resolves slack_notify_channel from YAML config", () => {
+    const resolved = resolveWorkflowConfig({
+      workflowPath: "/repo/WORKFLOW.md",
+      config: {
+        server: { slack_notify_channel: "C12345" },
+      },
+      promptTemplate: "Prompt",
+    });
+
+    expect(resolved.server.slackNotifyChannel).toBe("C12345");
+  });
+
+  it("resolves slack_notify_channel from SLACK_NOTIFY_CHANNEL env var fallback", () => {
+    const resolved = resolveWorkflowConfig(
+      {
+        workflowPath: "/repo/WORKFLOW.md",
+        config: {},
+        promptTemplate: "Prompt",
+      },
+      { SLACK_NOTIFY_CHANNEL: "C99999" },
+    );
+
+    expect(resolved.server.slackNotifyChannel).toBe("C99999");
+  });
+
+  it("YAML slack_notify_channel takes precedence over env var", () => {
+    const resolved = resolveWorkflowConfig(
+      {
+        workflowPath: "/repo/WORKFLOW.md",
+        config: {
+          server: { slack_notify_channel: "C_YAML" },
+        },
+        promptTemplate: "Prompt",
+      },
+      { SLACK_NOTIFY_CHANNEL: "C_ENV" },
+    );
+
+    expect(resolved.server.slackNotifyChannel).toBe("C_YAML");
+  });
+
+  it("returns null for slack_notify_channel when neither YAML nor env var is set", () => {
+    const resolved = resolveWorkflowConfig(
+      {
+        workflowPath: "/repo/WORKFLOW.md",
+        config: {},
+        promptTemplate: "Prompt",
+      },
+      {},
+    );
+
+    expect(resolved.server.slackNotifyChannel).toBeNull();
+  });
+
+  it("ignores non-string slack_notify_channel values", () => {
+    const resolved = resolveWorkflowConfig({
+      workflowPath: "/repo/WORKFLOW.md",
+      config: {
+        server: { slack_notify_channel: 12345 },
+      },
+      promptTemplate: "Prompt",
+    });
+
+    expect(resolved.server.slackNotifyChannel).toBeNull();
   });
 
   it("fast_track validation rejects unknown fast_track initial_stage target", () => {

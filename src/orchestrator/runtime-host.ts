@@ -15,7 +15,12 @@ import type {
   StageDefinition,
 } from "../config/types.js";
 import { WorkflowWatcher } from "../config/workflow-watch.js";
-import type { Issue, RetryEntry, RunningEntry } from "../domain/model.js";
+import type {
+  ExecutionHistory,
+  Issue,
+  RetryEntry,
+  RunningEntry,
+} from "../domain/model.js";
 import { ERROR_CODES } from "../errors/codes.js";
 import { formatEasternTimestamp } from "../logging/format-timestamp.js";
 import {
@@ -47,6 +52,7 @@ import type {
 } from "./core.js";
 import { OrchestratorCore } from "./core.js";
 import { runEnsembleGate } from "./gate-handler.js";
+import type { PipelineNotificationSink } from "./pipeline-notifier.js";
 
 export interface AgentRunnerLike {
   run(input: AgentRunInput): Promise<AgentRunResult>;
@@ -61,6 +67,7 @@ export interface RuntimeHostOptions {
   }) => AgentRunnerLike;
   logger?: StructuredLogger;
   workspaceManager?: WorkspaceManager;
+  notifier?: PipelineNotificationSink | null;
   now?: () => Date;
 }
 
@@ -71,6 +78,7 @@ export interface RuntimeServiceOptions {
   runtimeHost?: OrchestratorRuntimeHost;
   workspaceManager?: WorkspaceManager;
   workflowWatcher?: WorkflowWatcher | null;
+  notifier?: PipelineNotificationSink | null;
   now?: () => Date;
   logger?: StructuredLogger;
   stdout?: Writable;
@@ -135,9 +143,12 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
 
   private readonly snapshotListeners = new Set<() => void>();
 
+  readonly notifier: PipelineNotificationSink | null;
+
   constructor(options: RuntimeHostOptions) {
     this.config = options.config;
     this.tracker = options.tracker;
+    this.notifier = options.notifier ?? null;
     this.now = options.now ?? (() => new Date());
     this.logger = options.logger ?? null;
     this.workspaceManager =
@@ -519,11 +530,20 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
       },
     );
 
-    const liveSession = execution.lastResult?.liveSession;
+    // Pre-capture data that advanceStage() deletes during onWorkerExit()
+    const state = this.orchestrator.getState();
+    const runningEntry = state.running[execution.issueId];
+
+    // Compute durationMs using runAttempt.startedAt if available (normal completion case),
+    // falling back to runningEntry.startedAt for abnormal cases (stall timeout where runAttempt is null).
     const durationMs = execution.lastResult?.runAttempt?.startedAt
       ? this.now().getTime() -
         new Date(execution.lastResult.runAttempt.startedAt).getTime()
-      : 0;
+      : runningEntry?.startedAt
+        ? this.now().getTime() - new Date(runningEntry.startedAt).getTime()
+        : 0;
+
+    const liveSession = execution.lastResult?.liveSession;
     await this.logger?.log("info", "stage_completed", "Stage completed.", {
       issue_id: execution.issueId,
       issue_identifier: execution.issueIdentifier,
@@ -576,6 +596,19 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
           ? fallbackMessage
           : undefined) ?? undefined;
 
+    // Capture remaining state data
+    const preHistory: ExecutionHistory = [
+      ...(state.issueExecutionHistory[execution.issueId] ?? []),
+    ];
+    const preReworkCount = state.issueReworkCounts[execution.issueId] ?? 0;
+    const capturedTitle =
+      runningEntry?.issue.title ?? execution.issueIdentifier;
+    const capturedUrl = runningEntry?.issue.url ?? null;
+    const capturedRetryAttempt = runningEntry?.retryAttempt ?? null;
+    const preFailedHas = state.failed.has(execution.issueId);
+    const capturedFirstDispatchedAt =
+      state.issueFirstDispatchedAt[execution.issueId] ?? null;
+
     this.orchestrator.onWorkerExit({
       issueId: execution.issueId,
       outcome: input.outcome,
@@ -585,6 +618,128 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
         ? {}
         : { agentMessage }),
     });
+
+    // Re-read execution history after onWorkerExit appended the final stage record.
+    // For terminal cases (completed/failed), history is preserved.
+    // For continuations, history is deleted — but we don't notify on continuations.
+    const postHistory: ExecutionHistory = [
+      ...(this.orchestrator.getState().issueExecutionHistory[
+        execution.issueId
+      ] ?? preHistory),
+    ];
+
+    // Fire notifications after state update
+    if (this.notifier !== null) {
+      this.fireWorkerNotification(execution, input, {
+        preHistory: postHistory,
+        preReworkCount,
+        capturedTitle,
+        capturedUrl,
+        capturedRetryAttempt,
+        capturedTurnCount: runningEntry?.turnCount ?? 0,
+        preFailedHas,
+        capturedFirstDispatchedAt,
+        durationMs,
+      });
+    }
+  }
+
+  private fireWorkerNotification(
+    execution: WorkerExecution,
+    input: {
+      outcome: "normal" | "abnormal";
+      reason?: string;
+    },
+    captured: {
+      preHistory: ExecutionHistory;
+      preReworkCount: number;
+      capturedTitle: string;
+      capturedUrl: string | null;
+      capturedRetryAttempt: number | null;
+      capturedTurnCount: number;
+      preFailedHas: boolean;
+      capturedFirstDispatchedAt: string | null;
+      durationMs: number;
+    },
+  ): void {
+    // biome-ignore lint/style/noNonNullAssertion: caller guards notifier !== null
+    const notifier = this.notifier!;
+    const state = this.orchestrator.getState();
+
+    // Terminal failure — retries exhausted (check first; supersedes infra_error)
+    const nowFailed =
+      state.failed.has(execution.issueId) && !captured.preFailedHas;
+    if (nowFailed) {
+      const maxRetries = this.config.agent.maxRetryAttempts;
+      const retriesExhausted =
+        (captured.capturedRetryAttempt ?? 0) >= maxRetries;
+      notifier.notify({
+        type: "issue_failed",
+        issueIdentifier: execution.issueIdentifier,
+        issueTitle: captured.capturedTitle,
+        issueUrl: captured.capturedUrl,
+        failureReason: input.reason ?? null,
+        retriesExhausted,
+        retryAttempt: captured.capturedRetryAttempt,
+      });
+      return;
+    }
+
+    // Stall killed — immediate notification regardless of retry
+    if (
+      input.outcome === "abnormal" &&
+      execution.stopRequest?.reason === "stall_timeout"
+    ) {
+      notifier.notify({
+        type: "stall_killed",
+        issueIdentifier: execution.issueIdentifier,
+        issueTitle: captured.capturedTitle,
+        stageName: execution.stageName,
+        stallDurationMs: captured.durationMs,
+      });
+      return;
+    }
+
+    // Infra error — abnormal exit with 0 turns (agent never started)
+    if (input.outcome === "abnormal" && captured.capturedTurnCount === 0) {
+      notifier.notify({
+        type: "infra_error",
+        issueIdentifier: execution.issueIdentifier,
+        issueTitle: captured.capturedTitle,
+        errorReason: input.reason ?? "unknown error",
+      });
+      return;
+    }
+
+    // Terminal completion: issue is in completed set AND no continuation retry was scheduled
+    // (completed is added for both terminal and continuation, but only continuations schedule a retry)
+    const isInCompleted = state.completed.has(execution.issueId);
+    const hasContinuationRetry =
+      state.retryAttempts[execution.issueId] !== undefined;
+    const isNewlyFailed =
+      state.failed.has(execution.issueId) && !captured.preFailedHas;
+
+    if (isInCompleted && !hasContinuationRetry && !isNewlyFailed) {
+      const totalTokens = captured.preHistory.reduce(
+        (sum, r) => sum + r.totalTokens,
+        0,
+      );
+      const totalDurationMs =
+        captured.capturedFirstDispatchedAt !== null
+          ? this.now().getTime() -
+            Date.parse(captured.capturedFirstDispatchedAt)
+          : captured.durationMs;
+      notifier.notify({
+        type: "issue_completed",
+        issueIdentifier: execution.issueIdentifier,
+        issueTitle: captured.capturedTitle,
+        issueUrl: captured.capturedUrl,
+        executionHistory: captured.preHistory,
+        reworkCount: captured.preReworkCount,
+        totalTokens,
+        totalDurationMs,
+      });
+    }
   }
 
   private enqueue<T>(task: () => Promise<T> | T): Promise<T> {
@@ -644,6 +799,7 @@ export async function startRuntimeService(
   let workspaceManager =
     options.workspaceManager ??
     createWorkspaceManagerFromConfig(currentConfig, logger);
+  const notifier = options.notifier ?? null;
   const runtimeHost =
     options.runtimeHost ??
     new OrchestratorRuntimeHost({
@@ -651,10 +807,12 @@ export async function startRuntimeService(
       tracker,
       logger,
       workspaceManager,
+      notifier,
       ...(options.now === undefined ? {} : { now: options.now }),
     });
   const usesManagedTracker = options.tracker === undefined;
   const usesManagedWorkspaceManager = options.workspaceManager === undefined;
+  const startupTimestamp = Date.now();
 
   await cleanupTerminalIssueWorkspaces({
     tracker,
@@ -831,6 +989,15 @@ export async function startRuntimeService(
       duration_ms: Date.now() - shutdownStart,
     });
 
+    const runtimeState = runtimeHost.getState();
+    runtimeHost.notifier?.notify({
+      type: "pipeline_stopped",
+      productName,
+      completedCount: runtimeState.completed.size,
+      failedCount: runtimeState.failed.size,
+      durationMs: Date.now() - startupTimestamp,
+    });
+
     resolveExit(exitPromise, pendingExitCode);
     resolveClosed(exitPromise);
   };
@@ -840,6 +1007,14 @@ export async function startRuntimeService(
     poll_interval_ms: currentConfig.polling.intervalMs,
     max_concurrent_agents: currentConfig.agent.maxConcurrentAgents,
     ...(dashboard === null ? {} : { port: dashboard.port }),
+  });
+
+  const productName = extractProductName(currentConfig.workflowPath);
+  runtimeHost.notifier?.notify({
+    type: "pipeline_started",
+    productName,
+    dashboardUrl:
+      dashboard !== null ? `http://localhost:${dashboard.port}` : null,
   });
 
   void runPollCycle();
@@ -1327,4 +1502,16 @@ function supportsConfigUpdate(
   }): void;
 } {
   return "updateConfig" in value && typeof value.updateConfig === "function";
+}
+
+/**
+ * Extract a human-readable product name from a WORKFLOW file path.
+ * E.g., "/path/to/WORKFLOW-symphony.md" → "symphony"
+ *       "/path/to/WORKFLOW.md" → "WORKFLOW"
+ */
+export function extractProductName(workflowPath: string): string {
+  const filename = workflowPath.split("/").pop() ?? workflowPath;
+  const base = filename.replace(/\.md$/i, "");
+  const match = /^WORKFLOW-(.+)$/i.exec(base);
+  return match !== null ? (match[1] ?? base) : base;
 }

@@ -984,23 +984,42 @@ function extractUsage(message: JsonObject): CodexUsage | null {
 }
 
 function coerceUsage(value: JsonObject): CodexUsage | null {
-  const aliases = [
+  const specificAliases = [
     ["inputTokens", "outputTokens", "totalTokens"],
     ["input_tokens", "output_tokens", "total_tokens"],
-    ["input", "output", "total"],
   ] as const;
 
-  for (const [inputKey, outputKey, totalKey] of aliases) {
+  // Check specific aliases first (input + output sufficient)
+  for (const [inputKey, outputKey, totalKey] of specificAliases) {
     const input = asFiniteNumber(value[inputKey]);
     const output = asFiniteNumber(value[outputKey]);
     const total = asFiniteNumber(value[totalKey]);
-    if (input !== null && output !== null && total !== null) {
+    // Accept usage if at least input and output are present; total is optional.
+    if (input !== null && output !== null) {
       return {
         inputTokens: input,
         outputTokens: output,
-        totalTokens: total,
+        totalTokens: total ?? input + output,
+        ...extractExtendedTokenFields(value),
       };
     }
+  }
+
+  // Check generic alias (require all 3 fields to avoid false matches)
+  const genericInput = asFiniteNumber(value.input);
+  const genericOutput = asFiniteNumber(value.output);
+  const genericTotal = asFiniteNumber(value.total);
+  if (
+    genericInput !== null &&
+    genericOutput !== null &&
+    genericTotal !== null
+  ) {
+    return {
+      inputTokens: genericInput,
+      outputTokens: genericOutput,
+      totalTokens: genericTotal,
+      ...extractExtendedTokenFields(value),
+    };
   }
 
   if ("total_token_usage" in value) {
@@ -1015,6 +1034,61 @@ function coerceUsage(value: JsonObject): CodexUsage | null {
   }
 
   return null;
+}
+
+/**
+ * Extract optional extended token fields (cache, reasoning) from a usage object.
+ * Handles both camelCase and snake_case variants.
+ */
+function extractExtendedTokenFields(
+  value: JsonObject,
+): Partial<
+  Pick<
+    CodexUsage,
+    "cacheReadTokens" | "cacheWriteTokens" | "noCacheTokens" | "reasoningTokens"
+  >
+> {
+  const result: Partial<
+    Pick<
+      CodexUsage,
+      | "cacheReadTokens"
+      | "cacheWriteTokens"
+      | "noCacheTokens"
+      | "reasoningTokens"
+    >
+  > = {};
+
+  const cacheRead =
+    asFiniteNumber(value.cacheReadTokens) ??
+    asFiniteNumber(value.cache_read_tokens) ??
+    asFiniteNumber(value.cache_read_input_tokens);
+  if (cacheRead !== null) {
+    result.cacheReadTokens = cacheRead;
+  }
+
+  const cacheWrite =
+    asFiniteNumber(value.cacheWriteTokens) ??
+    asFiniteNumber(value.cache_write_tokens) ??
+    asFiniteNumber(value.cache_creation_input_tokens);
+  if (cacheWrite !== null) {
+    result.cacheWriteTokens = cacheWrite;
+  }
+
+  const noCache =
+    asFiniteNumber(value.noCacheTokens) ??
+    asFiniteNumber(value.no_cache_tokens);
+  if (noCache !== null) {
+    result.noCacheTokens = noCache;
+  }
+
+  const reasoning =
+    asFiniteNumber(value.reasoningTokens) ??
+    asFiniteNumber(value.reasoning_tokens);
+  if (reasoning !== null) {
+    result.reasoningTokens = reasoning;
+  }
+
+  return result;
 }
 
 function extractRateLimits(

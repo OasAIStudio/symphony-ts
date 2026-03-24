@@ -808,6 +808,24 @@ function renderDashboardClientScript(
           }
         }
 
+        function formatCompactTokens(tokens) {
+          if (tokens >= 1000000) {
+            return (tokens / 1000000).toFixed(1) + 'M';
+          }
+          if (tokens >= 1000) {
+            return (tokens / 1000).toFixed(1) + 'k';
+          }
+          return String(tokens);
+        }
+
+        function renderOutcomeLabel(outcome) {
+          if (outcome === 'normal') return '<span style="color: var(--accent-ink)">normal</span>';
+          if (outcome === 'failed_to_start') return '<span style="color: var(--danger)">failed to start</span>';
+          if (outcome === 'timed_out') return '<span style="color: var(--warning)">timed out</span>';
+          if (outcome === 'error') return '<span style="color: var(--danger)">error</span>';
+          return escapeHtml(outcome);
+        }
+
         function renderDetailPanel(row, rowId) {
           var contextItems = [];
           if (row.pipeline_stage != null) {
@@ -838,16 +856,26 @@ function renderDashboardClientScript(
             '<span class="detail-kv-label">Pipeline</span><span class="detail-kv-value numeric">' + formatInteger(row.total_pipeline_tokens) + '</span>' +
             '</div></div>';
 
-          const recentActivityItems = (!row.recent_activity || row.recent_activity.length === 0)
-            ? '<li><span class="turn-num">\u2014</span><span class="turn-msg muted">No recent activity.</span><span></span></li>'
-            : row.recent_activity.map(function (a) {
+          var displayActivity = (row.recent_activity || []).slice(-5);
+          const recentActivityItems = (displayActivity.length === 0)
+            ? (function () {
+                if (row.pipeline_stage != null) {
+                  var startMs = Date.parse(row.started_at);
+                  var elapsedSecs = isFinite(startMs) ? Math.max(0, Math.floor((Date.now() - startMs) / 1000)) : 0;
+                  var agoLabel = elapsedSecs < 60 ? elapsedSecs + 's ago' : Math.floor(elapsedSecs / 60) + 'm ago';
+                  return '<li><span class="turn-num">' + escapeHtml(row.pipeline_stage) + '</span><span class="turn-msg muted">stage started</span><span class="activity-time">' + escapeHtml(agoLabel) + '</span></li>';
+                }
+                return '<li><span class="turn-num">\u2014</span><span class="turn-msg muted">No recent activity.</span><span></span></li>';
+              })()
+            : displayActivity.map(function (a) {
                 var ago = '';
                 if (a.timestamp) {
                   var diffMs = Date.now() - new Date(a.timestamp).getTime();
                   var secs = Math.max(0, Math.floor(diffMs / 1000));
                   ago = secs < 60 ? secs + 's ago' : Math.floor(secs / 60) + 'm ago';
                 }
-                return '<li><span class="turn-num">' + escapeHtml(a.toolName) + '</span><span class="turn-msg" title="' + escapeHtml(a.context || '') + '">' + escapeHtml(a.context || '\u2014') + '</span><span class="activity-time">' + escapeHtml(ago) + '</span></li>';
+                var tokenLabel = (a.totalTokens != null && a.totalTokens > 0) ? ' \u00B7 ' + formatCompactTokens(a.totalTokens) : '';
+                return '<li><span class="turn-num">' + escapeHtml(a.toolName) + '</span><span class="turn-msg" title="' + escapeHtml(a.context || '') + '">' + escapeHtml(a.context || '\u2014') + tokenLabel + '</span><span class="activity-time">' + escapeHtml(ago) + '</span></li>';
               }).join('');
           const recentActivity =
             '<div class="detail-section">' +
@@ -858,7 +886,7 @@ function renderDashboardClientScript(
           const execRows = (!row.execution_history || row.execution_history.length === 0)
             ? '<tr><td colspan="4" class="muted">No completed stages.</td></tr>'
             : row.execution_history.map(function (s) {
-                return '<tr><td>' + escapeHtml(s.stageName) + '</td><td class="numeric">' + formatInteger(s.turns) + '</td><td class="numeric">' + formatInteger(s.totalTokens) + '</td><td>' + escapeHtml(s.outcome) + '</td></tr>';
+                return '<tr><td>' + escapeHtml(s.stageName) + '</td><td class="numeric">' + formatInteger(s.turns) + '</td><td class="numeric">' + formatInteger(s.totalTokens) + '</td><td>' + renderOutcomeLabel(s.outcome) + '</td></tr>';
               }).join('');
           const executionHistory =
             '<div class="detail-section">' +
@@ -1130,16 +1158,35 @@ function renderDetailPanel(row: RuntimeSnapshot["running"][number]): string {
       </div>
     </div>`;
 
+  const displayActivity = row.recent_activity.slice(-5);
   const recentActivityRows =
-    row.recent_activity.length === 0
-      ? '<li><span class="turn-num">—</span><span class="turn-msg muted">No recent activity.</span><span></span></li>'
-      : row.recent_activity
+    displayActivity.length === 0
+      ? (() => {
+          // Fallback: show stage-level status when session is active but no tool calls yet
+          if (row.pipeline_stage !== null) {
+            const startMs = Date.parse(row.started_at);
+            const elapsedSecs = Number.isFinite(startMs)
+              ? Math.max(0, Math.floor((Date.now() - startMs) / 1000))
+              : 0;
+            const agoLabel =
+              elapsedSecs < 60
+                ? `${elapsedSecs}s ago`
+                : `${Math.floor(elapsedSecs / 60)}m ago`;
+            return `<li><span class="turn-num">${escapeHtml(row.pipeline_stage)}</span><span class="turn-msg muted">stage started</span><span class="activity-time">${escapeHtml(agoLabel)}</span></li>`;
+          }
+          return '<li><span class="turn-num">\u2014</span><span class="turn-msg muted">No recent activity.</span><span></span></li>';
+        })()
+      : displayActivity
           .map((a) => {
             const diffMs = Date.now() - new Date(a.timestamp).getTime();
             const secs = Math.max(0, Math.floor(diffMs / 1000));
             const ago =
               secs < 60 ? `${secs}s ago` : `${Math.floor(secs / 60)}m ago`;
-            return `<li><span class="turn-num">${escapeHtml(a.toolName)}</span><span class="turn-msg" title="${escapeHtml(a.context ?? "")}">${escapeHtml(a.context ?? "—")}</span><span class="activity-time">${escapeHtml(ago)}</span></li>`;
+            const tokenLabel =
+              a.totalTokens !== undefined && a.totalTokens > 0
+                ? ` \u00B7 ${formatCompactTokens(a.totalTokens)}`
+                : "";
+            return `<li><span class="turn-num">${escapeHtml(a.toolName)}</span><span class="turn-msg" title="${escapeHtml(a.context ?? "")}">${escapeHtml(a.context ?? "\u2014")}${tokenLabel}</span><span class="activity-time">${escapeHtml(ago)}</span></li>`;
           })
           .join("");
 
@@ -1155,7 +1202,7 @@ function renderDetailPanel(row: RuntimeSnapshot["running"][number]): string {
       : row.execution_history
           .map(
             (s) =>
-              `<tr><td>${escapeHtml(s.stageName)}</td><td class="numeric">${formatInteger(s.turns)}</td><td class="numeric">${formatInteger(s.totalTokens)}</td><td>${escapeHtml(s.outcome)}</td></tr>`,
+              `<tr><td>${escapeHtml(s.stageName)}</td><td class="numeric">${formatInteger(s.turns)}</td><td class="numeric">${formatInteger(s.totalTokens)}</td><td>${renderOutcomeLabel(s.outcome)}</td></tr>`,
           )
           .join("");
 
@@ -1205,4 +1252,29 @@ function renderHealthBadge(
   const title =
     healthReason !== null ? ` title="${escapeHtml(healthReason)}"` : "";
   return `<span class="${cssClass}"${title}><span class="health-badge-dot"></span>${escapeHtml(label)}</span>`;
+}
+
+function formatCompactTokens(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    return `${(tokens / 1_000_000).toFixed(1)}M`;
+  }
+  if (tokens >= 1_000) {
+    return `${(tokens / 1_000).toFixed(1)}k`;
+  }
+  return String(tokens);
+}
+
+function renderOutcomeLabel(outcome: string): string {
+  switch (outcome) {
+    case "normal":
+      return '<span style="color: var(--accent-ink)">normal</span>';
+    case "failed_to_start":
+      return '<span style="color: var(--danger)">failed to start</span>';
+    case "timed_out":
+      return '<span style="color: var(--warning)">timed out</span>';
+    case "error":
+      return '<span style="color: var(--danger)">error</span>';
+    default:
+      return escapeHtml(outcome);
+  }
 }
