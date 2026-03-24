@@ -1,0 +1,60 @@
+# {{PROJECT_NAME}}
+
+## Project Overview
+
+{{PROJECT_NAME}} — replace this with a one-paragraph description of what the product does, who it's for, and why it exists. An agent reading this should understand the product's purpose in 30 seconds.
+
+## Architecture
+
+Describe the key directories, data flow, and patterns. Include a directory tree of the important paths:
+
+```
+src/
+├── api/          # REST endpoints
+├── components/   # UI components
+├── lib/          # Shared utilities
+└── types/        # TypeScript interfaces
+```
+
+## Build & Run
+
+```bash
+# Install dependencies
+npm install
+
+# Development server
+npm run dev
+
+# Build
+npm run build
+
+# Type check
+npx tsc --noEmit
+```
+
+## Conventions
+
+- **Language/runtime**: TypeScript strict mode, Node 22
+- **Imports**: `import type { ... }` for types
+- **Naming**: kebab-case files, PascalCase types, camelCase functions
+- **Patterns**: Document project-specific conventions here
+
+## Testing
+
+- **Framework**: Vitest (or your project's test framework)
+- **Run tests**: `npm test`
+- **Pattern**: co-located `*.test.ts` files or `tests/` directory
+- **Coverage**: all new code must have tests
+
+## Pipeline Notes
+
+- **Repository**: {{REPO_URL}}
+- **Auto-generated files**: `dist/`, `node_modules/`
+- **Required env vars**: document environment variables the app needs (never commit secrets — reference `.env.example`)
+- **Verify commands**: key commands that must pass before a PR is valid:
+  ```bash
+  npm test
+  npm run build
+  npx tsc --noEmit
+  ```
+- **Scope boundaries**: document things agents should NOT do

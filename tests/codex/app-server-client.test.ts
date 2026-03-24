@@ -47,6 +47,8 @@ describe("CodexAppServerClient", () => {
         inputTokens: 14,
         outputTokens: 9,
         totalTokens: 23,
+        cacheReadTokens: 4,
+        reasoningTokens: 2,
       },
       rateLimits: {
         requestsRemaining: 10,
@@ -156,7 +158,8 @@ describe("CodexAppServerClient", () => {
       usage: {
         inputTokens: 20,
         outputTokens: 10,
-        totalTokens: 30,
+        totalTokens: 30, // computed from input + output when total_tokens absent
+        cacheReadTokens: 5, // extracted from cache_read_input_tokens
       },
       rateLimits: {
         requests_remaining: 9,

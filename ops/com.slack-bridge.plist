@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  REFERENCE ONLY — this file is not used directly.
+  slack-bridge-ctl install generates the actual plist from .env.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.slack-bridge</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/node</string>
+        <string>/path/to/symphony-ts/dist/src/cli/main.js</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/path/to/symphony-ts</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/youruser</string>
+        <key>NODE_ENV</key>
+        <string>production</string>
+        <key>SLACK_BOT_TOKEN</key>
+        <string>xoxb-xxxxx</string>
+        <key>SLACK_SIGNING_SECRET</key>
+        <string>xxxxx</string>
+        <key>CHANNEL_PROJECT_MAP</key>
+        <string>{"C123":"/path/to/project"}</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>~/Library/Logs/slack-bridge/stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>~/Library/Logs/slack-bridge/stderr.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

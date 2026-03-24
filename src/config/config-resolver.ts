@@ -13,6 +13,7 @@ import {
   DEFAULT_LINEAR_PAGE_SIZE,
   DEFAULT_MAX_CONCURRENT_AGENTS,
   DEFAULT_MAX_CONCURRENT_AGENTS_BY_STATE,
+  DEFAULT_MAX_RETRY_ATTEMPTS,
   DEFAULT_MAX_RETRY_BACKOFF_MS,
   DEFAULT_MAX_TURNS,
   DEFAULT_OBSERVABILITY_ENABLED,
@@ -20,6 +21,7 @@ import {
   DEFAULT_OBSERVABILITY_RENDER_INTERVAL_MS,
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_READ_TIMEOUT_MS,
+  DEFAULT_RUNNER_KIND,
   DEFAULT_STALL_TIMEOUT_MS,
   DEFAULT_TERMINAL_STATES,
   DEFAULT_TRACKER_KIND,
@@ -28,8 +30,16 @@ import {
 } from "./defaults.js";
 import type {
   DispatchValidationResult,
+  FastTrackConfig,
+  GateType,
   ResolvedWorkflowConfig,
+  ReviewerDefinition,
+  StageDefinition,
+  StageTransitions,
+  StageType,
+  StagesConfig,
 } from "./types.js";
+import { GATE_TYPES, STAGE_TYPES } from "./types.js";
 
 const LINEAR_CANONICAL_API_KEY_ENV = "LINEAR_API_KEY";
 
@@ -43,6 +53,7 @@ export function resolveWorkflowConfig(
   const workspace = asRecord(config.workspace);
   const hooks = asRecord(config.hooks);
   const agent = asRecord(config.agent);
+  const runner = asRecord(config.runner);
   const codex = asRecord(config.codex);
   const server = asRecord(config.server);
   const observability = asRecord(config.observability);
@@ -94,9 +105,16 @@ export function resolveWorkflowConfig(
       maxRetryBackoffMs:
         readPositiveInteger(agent.max_retry_backoff_ms) ??
         DEFAULT_MAX_RETRY_BACKOFF_MS,
+      maxRetryAttempts:
+        readPositiveInteger(agent.max_retry_attempts) ??
+        DEFAULT_MAX_RETRY_ATTEMPTS,
       maxConcurrentAgentsByState: readStateConcurrencyMap(
         agent.max_concurrent_agents_by_state,
       ),
+    },
+    runner: {
+      kind: readString(runner.kind) ?? DEFAULT_RUNNER_KIND,
+      model: readString(runner.model),
     },
     codex: {
       command: readString(codex.command) ?? DEFAULT_CODEX_COMMAND,
@@ -112,6 +130,10 @@ export function resolveWorkflowConfig(
     },
     server: {
       port: readNonNegativeInteger(server.port),
+      slackNotifyChannel:
+        readString(server.slack_notify_channel) ??
+        environment.SLACK_NOTIFY_CHANNEL ??
+        null,
     },
     observability: {
       dashboardEnabled:
@@ -124,6 +146,8 @@ export function resolveWorkflowConfig(
         readPositiveInteger(observability.render_interval_ms) ??
         DEFAULT_OBSERVABILITY_RENDER_INTERVAL_MS,
     },
+    stages: resolveStagesConfig(config.stages),
+    escalationState: readString(config.escalation_state),
   };
 }
 
@@ -343,6 +367,237 @@ function resolvePathValue(
 
   expanded = resolve(resolve(workflowPath, ".."), expanded);
   return normalize(expanded);
+}
+
+export function resolveStagesConfig(value: unknown): StagesConfig | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const raw = value as Record<string, unknown>;
+  const stageEntries: Record<string, StageDefinition> = {};
+  let firstStageName: string | null = null;
+
+  for (const [name, stageValue] of Object.entries(raw)) {
+    if (name === "initial_stage" || name === "fast_track") {
+      continue;
+    }
+
+    const stageRecord = asRecord(stageValue);
+    const rawType = readString(stageRecord.type);
+    const stageType = parseStageType(rawType);
+    if (stageType === null) {
+      continue;
+    }
+
+    if (firstStageName === null) {
+      firstStageName = name;
+    }
+
+    stageEntries[name] = {
+      type: stageType,
+      runner: readString(stageRecord.runner),
+      model: readString(stageRecord.model),
+      prompt: readString(stageRecord.prompt),
+      maxTurns: readPositiveInteger(stageRecord.max_turns),
+      timeoutMs: readPositiveInteger(stageRecord.timeout_ms),
+      concurrency: readPositiveInteger(stageRecord.concurrency),
+      gateType: parseGateType(readString(stageRecord.gate_type)),
+      maxRework: readPositiveInteger(stageRecord.max_rework),
+      reviewers: parseReviewers(stageRecord.reviewers),
+      transitions: {
+        onComplete: readString(stageRecord.on_complete),
+        onApprove: readString(stageRecord.on_approve),
+        onRework: readString(stageRecord.on_rework),
+      },
+      linearState: readString(stageRecord.linear_state),
+    };
+  }
+
+  if (Object.keys(stageEntries).length === 0) {
+    return null;
+  }
+
+  // biome-ignore lint/style/noNonNullAssertion: firstStageName guaranteed non-null when stageEntries is non-empty
+  const initialStage = readString(raw.initial_stage) ?? firstStageName!;
+
+  const fastTrackRaw = asRecord(raw.fast_track);
+  const fastTrackLabel = readString(fastTrackRaw.label);
+  const fastTrackInitialStage = readString(fastTrackRaw.initial_stage);
+  const fastTrack: FastTrackConfig | null =
+    fastTrackLabel !== null && fastTrackInitialStage !== null
+      ? { label: fastTrackLabel, initialStage: fastTrackInitialStage }
+      : null;
+
+  return Object.freeze({
+    initialStage,
+    fastTrack,
+    stages: Object.freeze(stageEntries),
+  });
+}
+
+export interface StagesValidationResult {
+  ok: boolean;
+  errors: string[];
+}
+
+export function validateStagesConfig(
+  stagesConfig: StagesConfig | null,
+): StagesValidationResult {
+  if (stagesConfig === null) {
+    return { ok: true, errors: [] };
+  }
+
+  const errors: string[] = [];
+  const stageNames = new Set(Object.keys(stagesConfig.stages));
+
+  if (!stageNames.has(stagesConfig.initialStage)) {
+    errors.push(
+      `initial_stage '${stagesConfig.initialStage}' does not reference a defined stage.`,
+    );
+  }
+
+  if (
+    stagesConfig.fastTrack != null &&
+    !stageNames.has(stagesConfig.fastTrack.initialStage)
+  ) {
+    errors.push(
+      `fast_track.initial_stage '${stagesConfig.fastTrack.initialStage}' does not reference a defined stage.`,
+    );
+  }
+
+  let hasTerminal = false;
+  for (const [name, stage] of Object.entries(stagesConfig.stages)) {
+    if (stage.type === "terminal") {
+      hasTerminal = true;
+      continue;
+    }
+
+    if (stage.type === "agent") {
+      if (stage.transitions.onComplete === null) {
+        errors.push(`Stage '${name}' (agent) has no on_complete transition.`);
+      } else if (!stageNames.has(stage.transitions.onComplete)) {
+        errors.push(
+          `Stage '${name}' on_complete references unknown stage '${stage.transitions.onComplete}'.`,
+        );
+      }
+
+      if (
+        stage.transitions.onRework !== null &&
+        !stageNames.has(stage.transitions.onRework)
+      ) {
+        errors.push(
+          `Stage '${name}' on_rework references unknown stage '${stage.transitions.onRework}'.`,
+        );
+      }
+    }
+
+    if (stage.type === "gate") {
+      if (stage.transitions.onApprove === null) {
+        errors.push(`Stage '${name}' (gate) has no on_approve transition.`);
+      } else if (!stageNames.has(stage.transitions.onApprove)) {
+        errors.push(
+          `Stage '${name}' on_approve references unknown stage '${stage.transitions.onApprove}'.`,
+        );
+      }
+
+      if (
+        stage.transitions.onRework !== null &&
+        !stageNames.has(stage.transitions.onRework)
+      ) {
+        errors.push(
+          `Stage '${name}' on_rework references unknown stage '${stage.transitions.onRework}'.`,
+        );
+      }
+    }
+  }
+
+  if (!hasTerminal) {
+    errors.push(
+      "No terminal stage defined. At least one stage must have type 'terminal'.",
+    );
+  }
+
+  // Check reachability from initial stage
+  const reachable = new Set<string>();
+  const queue = [stagesConfig.initialStage];
+  while (queue.length > 0) {
+    // biome-ignore lint/style/noNonNullAssertion: queue.length > 0 guarantees pop() returns a value
+    const current = queue.pop()!;
+    if (reachable.has(current)) {
+      continue;
+    }
+    reachable.add(current);
+
+    const stage = stagesConfig.stages[current];
+    if (stage === undefined) {
+      continue;
+    }
+
+    for (const target of [
+      stage.transitions.onComplete,
+      stage.transitions.onApprove,
+      stage.transitions.onRework,
+    ]) {
+      if (target !== null && !reachable.has(target)) {
+        queue.push(target);
+      }
+    }
+  }
+
+  for (const name of stageNames) {
+    if (!reachable.has(name)) {
+      errors.push(
+        `Stage '${name}' is unreachable from initial stage '${stagesConfig.initialStage}'.`,
+      );
+    }
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+function parseReviewers(value: unknown): ReviewerDefinition[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry) => {
+    const record = asRecord(entry);
+    const runner = readString(record.runner);
+    const role = readString(record.role);
+    if (runner === null || role === null) {
+      return [];
+    }
+
+    return [
+      {
+        runner,
+        model: readString(record.model),
+        role,
+        prompt: readString(record.prompt),
+      },
+    ];
+  });
+}
+
+function parseStageType(value: string | null): StageType | null {
+  if (value === null) {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return (STAGE_TYPES as readonly string[]).includes(normalized)
+    ? (normalized as StageType)
+    : null;
+}
+
+function parseGateType(value: string | null): GateType | null {
+  if (value === null) {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return (GATE_TYPES as readonly string[]).includes(normalized)
+    ? (normalized as GateType)
+    : null;
 }
 
 export const LINEAR_DEFAULTS = Object.freeze({

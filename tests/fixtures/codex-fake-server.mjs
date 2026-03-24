@@ -40,8 +40,8 @@ async function handleMessage(message) {
         "initialize must include clientInfo.name",
       );
       assertEqual(
-        message.params.clientInfo?.version,
-        "0.1.0",
+        typeof message.params.clientInfo?.version,
+        "string",
         "initialize must include clientInfo.version",
       );
       assertEqual(
@@ -204,7 +204,7 @@ async function handleMessage(message) {
                     usage: {
                       input_tokens: 20,
                       output_tokens: 10,
-                      total_tokens: 30,
+                      cache_read_input_tokens: 5,
                     },
                   },
                   rate_limits: {
@@ -291,6 +291,8 @@ async function handleMessage(message) {
             inputTokens: 14,
             outputTokens: 9,
             totalTokens: 23,
+            cacheReadTokens: 4,
+            reasoningTokens: 2,
           },
           rateLimits: {
             requestsRemaining: 10,

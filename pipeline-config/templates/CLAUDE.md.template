@@ -1,0 +1,66 @@
+# <Product Name>
+
+Replace with the actual product name (e.g., "Jony Design System", "Healthspanners Mobile App").
+
+## Project Overview
+
+One paragraph: what the product does, who it's for, and why it exists. Keep it concrete — an agent reading this should understand the product's purpose in 30 seconds.
+
+## Architecture
+
+Describe the key directories, data flow, and patterns. Include a directory tree of the important paths. Example:
+
+```
+src/
+├── api/          # REST endpoints
+├── components/   # React components
+├── lib/          # Shared utilities
+└── types/        # TypeScript interfaces
+```
+
+Mention the primary data flow (e.g., "React frontend → Hono API → SQLite" or "YAML source files → build script → generated output"). Call out any non-obvious architectural decisions.
+
+## Build & Run
+
+Exact commands to build, run, and develop. No ambiguity — copy-paste ready.
+
+```bash
+# Install dependencies
+npm install
+
+# Development server (port from D40 port table)
+# jony=3000, hs-data=3001, hs-ui=3002, stickerlabs=3003, household=3004, pipeline-test-1=3005
+npm run dev          # http://localhost:<PORT>
+
+# Build
+npm run build
+
+# Type check
+npx tsc --noEmit
+```
+
+## Conventions
+
+Language, framework, and style conventions that agents must follow. Cover:
+
+- **Language/runtime**: e.g., TypeScript strict mode, Node 20, ESNext target
+- **Imports**: e.g., `import type { ... }` for types, `.js` extensions for NodeNext
+- **Naming**: e.g., kebab-case files, PascalCase components, camelCase functions
+- **Patterns**: e.g., barrel exports, Zod at I/O boundaries only, no enums
+
+## Testing
+
+- **Framework**: e.g., Vitest, Jest, Playwright
+- **Run tests**: `npm test`
+- **Pattern**: e.g., co-located `*.test.ts` files or `tests/` directory
+- **Coverage**: state expectations (e.g., "all new code must have tests", "critical paths only")
+
+## Pipeline Notes
+
+What Symphony pipeline agents need to know that isn't obvious from the code.
+
+- **Auto-generated files**: list any files that should never be edited directly (e.g., `output/`, `dist/`, `generated/`)
+- **Fragile areas**: modules or patterns where agents commonly break things (e.g., "migration files are order-sensitive", "don't modify the auth middleware without updating the test fixtures")
+- **Required env vars**: list environment variables the app needs (e.g., `DATABASE_URL`, `BASE_URL`). Note: never commit secrets — reference `.env.example` if one exists
+- **Verify commands**: key commands that must pass before a PR is valid (e.g., `npm test`, `npm run build`, `npx tsc --noEmit`)
+- **Scope boundaries**: things agents should NOT do (e.g., "don't modify shared components without coordinating", "don't add dependencies without flagging in PR")

@@ -65,10 +65,13 @@ tool handling, and the optional `linear_graphql` dynamic tool extension.
 - `tests/logging/session-metrics.test.ts`
 - `tests/logging/runtime-snapshot.test.ts`
 - `tests/observability/dashboard-server.test.ts`
+- `tests/orchestrator/runtime-host.test.ts` (poll_tick_completed event)
 
 Covered behaviors include operator-visible validation failures via runtime
 surfaces, structured log context fields, sink failure isolation, token and
-rate-limit aggregation, and the operator dashboard APIs.
+rate-limit aggregation, the operator dashboard APIs, and the `poll_tick_completed`
+structured log event emitted after each successful poll tick (including
+`dispatched_count`, `running_count`, `reconciled_stop_requests`, and `duration_ms`).
 
 ## 17.7 CLI and Host Lifecycle
 

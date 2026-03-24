@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  merge_group:
   workflow_dispatch:
 
 permissions:
@@ -11,6 +12,7 @@ permissions:
 
 jobs:
   release:
+    if: false
     runs-on: ubuntu-latest
 
     steps:

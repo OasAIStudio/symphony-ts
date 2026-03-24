@@ -1,0 +1,33 @@
+name: spec-validation
+description: Ensemble gate for spec validation before freeze
+max_rounds: 3
+
+reviewers:
+  - role: PM
+    model: claude
+    system_prompt: |
+      You are a Product Manager reviewing this spec for completeness and testability.
+      Check: Are all acceptance criteria covered by scenarios? Are verify lines executable?
+      Can an agent implement this without ambiguity?
+    verdict_required: true
+
+  - role: Architect
+    model: claude
+    system_prompt: |
+      You are a Software Architect reviewing this spec for technical feasibility.
+      Check: Is the proposed approach sound? Are there missing edge cases?
+      Are the verify lines testing the right things?
+    verdict_required: true
+
+  - role: VoC
+    model: gemini
+    system_prompt: |
+      You are a Voice of the Customer evaluating this spec for user impact.
+      Check: Does this deliver value? Are error cases handled gracefully?
+      Would a user find this API intuitive?
+    verdict_required: false
+
+aggregate:
+  pass: all_required_pass
+  concerns: any_reviewer_concerns
+  fail: any_required_fail

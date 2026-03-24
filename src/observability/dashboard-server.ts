@@ -111,7 +111,7 @@ export interface DashboardServerInstance {
 }
 
 export function createDashboardServer(options: DashboardServerOptions): Server {
-  const hostname = options.hostname ?? "127.0.0.1";
+  const hostname = options.hostname ?? "0.0.0.0";
   const snapshotTimeoutMs =
     options.snapshotTimeoutMs ?? DEFAULT_SNAPSHOT_TIMEOUT_MS;
   const liveController = new DashboardLiveUpdatesController({
@@ -144,7 +144,7 @@ export async function startDashboardServer(
   },
 ): Promise<DashboardServerInstance> {
   const server = createDashboardServer(options);
-  const hostname = options.hostname ?? "127.0.0.1";
+  const hostname = options.hostname ?? "0.0.0.0";
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -183,7 +183,7 @@ export function createDashboardRequestHandler(
     liveController?: DashboardLiveUpdatesController;
   },
 ): (request: IncomingMessage, response: ServerResponse) => Promise<void> {
-  const hostname = options.hostname ?? "127.0.0.1";
+  const hostname = options.hostname ?? "0.0.0.0";
   const snapshotTimeoutMs =
     options.snapshotTimeoutMs ?? DEFAULT_SNAPSHOT_TIMEOUT_MS;
   const renderOptions: DashboardRenderOptions = {

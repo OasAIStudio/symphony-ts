@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   CLI_ACKNOWLEDGEMENT_FLAG,
+  type StartCliHostInput,
   applyCliOverrides,
   parseCliArgs,
   runCli,
@@ -30,6 +31,7 @@ describe("cli", () => {
       port: 8080,
       acknowledged: true,
       help: false,
+      version: false,
     });
   });
 
@@ -47,6 +49,7 @@ describe("cli", () => {
       createConfig({
         server: {
           port: 3000,
+          slackNotifyChannel: null,
         },
       }),
       {
@@ -55,6 +58,7 @@ describe("cli", () => {
         port: 8080,
         acknowledged: true,
         help: false,
+        version: false,
       },
       "/repo",
     );
@@ -216,6 +220,51 @@ describe("cli", () => {
       "Symphony host exited abnormally with code 3.\n",
     );
   });
+
+  it("prints version and exits 0 when --version is passed", async () => {
+    const stdout = vi.fn();
+    const exitCode = await runCli(["--version"], {
+      io: { stdout, stderr: vi.fn() },
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout).toHaveBeenCalledWith(
+      expect.stringMatching(/^symphony-ts .+\n$/),
+    );
+  });
+
+  it("env with SLACK_BOT_TOKEN is forwarded to startHost", async () => {
+    const capturedInput: StartCliHostInput[] = [];
+    const startHost = vi.fn(async (input: StartCliHostInput) => {
+      capturedInput.push(input);
+      return {
+        async waitForExit() {
+          return 0;
+        },
+      };
+    });
+
+    const injectedEnv = { SLACK_BOT_TOKEN: "xoxb-injected-token" };
+
+    await runCli([CLI_ACKNOWLEDGEMENT_FLAG], {
+      env: injectedEnv,
+      loadWorkflowDefinition: vi.fn(async () => ({
+        workflowPath: "/repo/WORKFLOW.md",
+        config: {},
+        promptTemplate: "Prompt",
+      })),
+      startHost,
+    });
+
+    expect(startHost).toHaveBeenCalledOnce();
+    expect(capturedInput[0]?.env).toBe(injectedEnv);
+    expect(capturedInput[0]?.env.SLACK_BOT_TOKEN).toBe("xoxb-injected-token");
+  });
+
+  it("parses --version flag", () => {
+    expect(parseCliArgs(["--version"])).toEqual(
+      expect.objectContaining({ version: true }),
+    );
+  });
 });
 
 function createConfig(
@@ -249,6 +298,7 @@ function createConfig(
       maxConcurrentAgents: 10,
       maxTurns: 20,
       maxRetryBackoffMs: 300_000,
+      maxRetryAttempts: 5,
       maxConcurrentAgentsByState: {},
     },
     codex: {
@@ -262,12 +312,19 @@ function createConfig(
     },
     server: {
       port: null,
+      slackNotifyChannel: null,
     },
     observability: {
       dashboardEnabled: true,
       refreshMs: 1_000,
       renderIntervalMs: 16,
     },
+    runner: {
+      kind: "codex",
+      model: null,
+    },
+    stages: null,
+    escalationState: null,
     ...overrides,
   };
 }
