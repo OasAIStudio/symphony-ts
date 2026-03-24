@@ -865,7 +865,7 @@ function renderDashboardClientScript(
                   var agoLabel = elapsedSecs < 60 ? elapsedSecs + 's ago' : Math.floor(elapsedSecs / 60) + 'm ago';
                   return '<li><span class="turn-num">' + escapeHtml(row.pipeline_stage) + '</span><span class="turn-msg muted">stage started</span><span class="activity-time">' + escapeHtml(agoLabel) + '</span></li>';
                 }
-                return '<li><span class="turn-num">\u2014</span><span class="turn-msg muted">No recent activity.</span><span></span></li>';
+                return '<li><span class="turn-num">\u2014</span><span class="turn-msg muted">Waiting for agent activity...</span><span></span></li>';
               })()
             : displayActivity.map(function (a) {
                 var ago = '';
@@ -1174,7 +1174,7 @@ function renderDetailPanel(row: RuntimeSnapshot["running"][number]): string {
                 : `${Math.floor(elapsedSecs / 60)}m ago`;
             return `<li><span class="turn-num">${escapeHtml(row.pipeline_stage)}</span><span class="turn-msg muted">stage started</span><span class="activity-time">${escapeHtml(agoLabel)}</span></li>`;
           }
-          return '<li><span class="turn-num">\u2014</span><span class="turn-msg muted">No recent activity.</span><span></span></li>';
+          return '<li><span class="turn-num">\u2014</span><span class="turn-msg muted">Waiting for agent activity...</span><span></span></li>';
         })()
       : displayActivity
           .map((a) => {

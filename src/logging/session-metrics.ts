@@ -506,5 +506,16 @@ export function buildActivityContext(
     return null;
   }
 
+  // Unknown tools: extract first string-valued argument, truncated to 60 chars
+  for (const value of Object.values(input)) {
+    if (typeof value === "string" && value.trim().length > 0) {
+      const trimmed = value.trim();
+      if (trimmed.length <= BASH_COMMAND_MAX_LENGTH) {
+        return trimmed;
+      }
+      return `${trimmed.slice(0, BASH_COMMAND_MAX_LENGTH)}…`;
+    }
+  }
+
   return null;
 }

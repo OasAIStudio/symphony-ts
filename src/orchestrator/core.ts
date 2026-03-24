@@ -1421,18 +1421,6 @@ export class OrchestratorCore {
         monitorHandle: spawned.monitorHandle,
       };
       this.state.running[issue.id] = runEntry;
-      addPipelineActivity(
-        runEntry,
-        "session_start",
-        `${stageName ?? "default"} stage started`,
-      );
-      if (stage?.linearState != null) {
-        addPipelineActivity(
-          runEntry,
-          "state_change",
-          `Linear state → ${stage.linearState}`,
-        );
-      }
       this.state.claimed.add(issue.id);
       this.clearRetryEntry(issue.id);
       return true;

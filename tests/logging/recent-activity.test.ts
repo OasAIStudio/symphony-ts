@@ -113,8 +113,20 @@ describe("buildActivityContext", () => {
     );
   });
 
-  it("returns null for unknown tools", () => {
-    expect(buildActivityContext("UnknownTool", { some: "data" })).toBeNull();
+  it("extracts first string-valued argument for unknown tools", () => {
+    expect(buildActivityContext("UnknownTool", { some: "data" })).toBe("data");
+  });
+
+  it("truncates long string arguments for unknown tools to 60 chars", () => {
+    const longValue = "A".repeat(80);
+    const result = buildActivityContext("TodoWrite", { content: longValue });
+    expect(result).toBe(`${"A".repeat(60)}…`);
+  });
+
+  it("returns null for unknown tools with no string-valued arguments", () => {
+    expect(
+      buildActivityContext("UnknownTool", { count: 42, flag: true }),
+    ).toBeNull();
   });
 
   it("returns null when input is not an object", () => {
@@ -205,7 +217,7 @@ describe("recent activity ring buffer", () => {
     expect(session.recentActivity[0]!.context).toBe("npm test");
   });
 
-  it("records unknown tool calls with null context", () => {
+  it("records unknown tool calls with first string arg as context", () => {
     const session = createEmptyLiveSession();
 
     const event = createEvent("approval_auto_approved", {
@@ -213,6 +225,25 @@ describe("recent activity ring buffer", () => {
         params: {
           toolName: "CustomTool",
           input: { data: "value" },
+        },
+      },
+    });
+
+    applyCodexEventToSession(session, event);
+
+    expect(session.recentActivity).toHaveLength(1);
+    expect(session.recentActivity[0]!.toolName).toBe("CustomTool");
+    expect(session.recentActivity[0]!.context).toBe("value");
+  });
+
+  it("records unknown tool calls with null context when no string args", () => {
+    const session = createEmptyLiveSession();
+
+    const event = createEvent("approval_auto_approved", {
+      raw: {
+        params: {
+          toolName: "CustomTool",
+          input: { count: 42, flag: true },
         },
       },
     });

@@ -9,8 +9,10 @@ import {
 } from "../../src/domain/model.js";
 import {
   addEndedSessionRuntime,
+  addPipelineActivity,
   applyCodexEventToOrchestratorState,
   applyCodexEventToSession,
+  buildActivityContext,
   getAggregateSecondsRunning,
   summarizeCodexEvent,
 } from "../../src/logging/session-metrics.js";
@@ -449,7 +451,7 @@ describe("session metrics", () => {
 
       expect(session.recentActivity).toHaveLength(1);
       expect(session.recentActivity[0]!.toolName).toBe("linear_graphql");
-      expect(session.recentActivity[0]!.context).toBeNull();
+      expect(session.recentActivity[0]!.context).toBe("{ viewer { id } }");
     });
 
     it("tracks turn_completed events with token count", () => {
@@ -598,6 +600,65 @@ describe("session metrics", () => {
       expect(session.recentActivity[0]!.timestamp).toBe(
         "2026-03-06T10:00:02.000Z",
       );
+    });
+  });
+
+  describe("no synthetic entries in activity feed", () => {
+    it("addPipelineActivity with stage_transition still works", () => {
+      const session = createEmptyLiveSession();
+      addPipelineActivity(session, "stage_transition", "Stage → implement");
+      expect(session.recentActivity).toHaveLength(1);
+      expect(session.recentActivity[0]!.toolName).toBe("stage_transition");
+    });
+
+    it("activity feed does not contain session_start or state_change entries from orchestrator dispatch", () => {
+      // After removing synthetic entries from core.ts, a fresh session
+      // should have no session_start or state_change entries in recentActivity
+      const session = createEmptyLiveSession();
+      // Simulate what the orchestrator now does (no addPipelineActivity calls for session_start/state_change)
+      expect(
+        session.recentActivity.filter(
+          (e) =>
+            e.toolName === "session_start" || e.toolName === "state_change",
+        ),
+      ).toHaveLength(0);
+    });
+  });
+
+  describe("unknown tool types show arguments", () => {
+    it("extracts first string-valued argument for unknown tools", () => {
+      expect(
+        buildActivityContext("TodoWrite", { content: "Fix the bug" }),
+      ).toBe("Fix the bug");
+    });
+
+    it("truncates long string arguments to 60 chars", () => {
+      const longValue = "A".repeat(80);
+      expect(buildActivityContext("WebSearch", { query: longValue })).toBe(
+        `${"A".repeat(60)}…`,
+      );
+    });
+
+    it("returns null for unknown tools with no string-valued arguments", () => {
+      expect(
+        buildActivityContext("SomeTool", { count: 42, flag: true }),
+      ).toBeNull();
+    });
+
+    it("skips empty/whitespace-only string arguments", () => {
+      expect(
+        buildActivityContext("SomeTool", { empty: "", second: "valid" }),
+      ).toBe("valid");
+    });
+
+    it("picks first string argument when mixed types exist", () => {
+      expect(
+        buildActivityContext("SomeTool", {
+          num: 42,
+          name: "hello",
+          other: "world",
+        }),
+      ).toBe("hello");
     });
   });
 
