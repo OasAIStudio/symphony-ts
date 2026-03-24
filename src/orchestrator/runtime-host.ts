@@ -625,9 +625,7 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
     // then to preHistory as a last resort.
     const postHistory: ExecutionHistory = [
       ...(this.orchestrator.consumeExitHistorySnapshot(execution.issueId) ??
-        this.orchestrator.getState().issueExecutionHistory[
-          execution.issueId
-        ] ??
+        this.orchestrator.getState().issueExecutionHistory[execution.issueId] ??
         preHistory),
     ];
 
