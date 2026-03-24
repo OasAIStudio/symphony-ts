@@ -491,7 +491,6 @@ export class OrchestratorCore {
       }
 
       // Stage advanced or no stages configured — schedule continuation
-      this.state.completed.add(input.issueId);
       return this.scheduleRetry(input.issueId, 1, {
         identifier: runningEntry.identifier,
         error: null,

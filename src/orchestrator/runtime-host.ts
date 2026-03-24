@@ -713,7 +713,7 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
     }
 
     // Terminal completion: issue is in completed set AND no continuation retry was scheduled
-    // (completed is added for both terminal and continuation, but only continuations schedule a retry)
+    // (completed is only added for terminal completions; hasContinuationRetry kept as defense-in-depth)
     const isInCompleted = state.completed.has(execution.issueId);
     const hasContinuationRetry =
       state.retryAttempts[execution.issueId] !== undefined;

@@ -1276,7 +1276,9 @@ describe("max retry safety net", () => {
       attempt: 1,
       error: null,
     });
-    expect(orchestrator.getState().completed.has("1")).toBe(true);
+    // After the fix for SYMPH-126, continuations no longer add to completed —
+    // only terminal completions do.
+    expect(orchestrator.getState().completed.has("1")).toBe(false);
     expect(orchestrator.getState().claimed.has("1")).toBe(true);
   });
 

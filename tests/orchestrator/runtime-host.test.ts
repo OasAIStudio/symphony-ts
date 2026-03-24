@@ -1726,6 +1726,60 @@ describe("pipeline notifications in startRuntimeService", () => {
     });
   });
 
+  it("pipeline_stopped.completedCount counts only terminal completions", async () => {
+    const tracker = createTracker({ candidates: [] });
+    const fakeRunner = new FakeAgentRunner();
+    const notifier = createMockNotifierForService();
+    const logger = new StructuredLogger([{ write() {} }]);
+
+    const runtimeHost = new OrchestratorRuntimeHost({
+      config: createConfig(),
+      tracker,
+      logger,
+      notifier,
+      agentRunner: fakeRunner,
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    const service = await startRuntimeService({
+      config: createConfig(),
+      tracker,
+      logger,
+      notifier,
+      workflowWatcher: null,
+      runtimeHost,
+    });
+
+    await service.runtimeHost.flushEvents();
+
+    // Manipulate state: issue "A" terminally completed, issue "B" mid-continuation
+    const state = runtimeHost.getState();
+    state.completed.add("A");
+    // "B" is mid-continuation — it has a retryAttempts entry but is NOT in completed
+    // (after the fix, continuations no longer add to completed)
+    state.retryAttempts.B = {
+      issueId: "B",
+      identifier: "ISSUE-B",
+      attempt: 1,
+      dueAtMs: Date.parse("2026-03-06T00:01:00.000Z"),
+      timerHandle: null,
+      error: null,
+      delayType: "continuation",
+    };
+
+    await service.shutdown();
+
+    const stoppedEvents = notifier.events.filter(
+      (e) => e.type === "pipeline_stopped",
+    );
+    expect(stoppedEvents).toHaveLength(1);
+    expect(stoppedEvents[0]).toMatchObject({
+      type: "pipeline_stopped",
+      completedCount: 1,
+      failedCount: 0,
+    });
+  });
+
   function createMockNotifierForService() {
     const events: PipelineNotificationEvent[] = [];
     return {
