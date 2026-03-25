@@ -884,14 +884,14 @@ function renderDashboardClientScript(
             '</div>';
 
           const execRows = (!row.execution_history || row.execution_history.length === 0)
-            ? '<tr><td colspan="4" class="muted">No completed stages.</td></tr>'
+            ? '<tr><td colspan="6" class="muted">No completed stages.</td></tr>'
             : row.execution_history.map(function (s) {
-                return '<tr><td>' + escapeHtml(s.stageName) + '</td><td class="numeric">' + formatInteger(s.turns) + '</td><td class="numeric">' + formatInteger(s.totalTokens) + '</td><td>' + renderOutcomeLabel(s.outcome) + '</td></tr>';
+                return '<tr><td>' + escapeHtml(s.stageName) + '</td><td class="numeric">' + formatInteger(s.turns) + '</td><td class="numeric">' + formatInteger(s.totalTokens) + '</td><td class="numeric">' + formatInteger(s.inputTokens || 0) + '</td><td class="numeric">' + formatInteger(s.outputTokens || 0) + '</td><td>' + renderOutcomeLabel(s.outcome) + '</td></tr>';
               }).join('');
           const executionHistory =
             '<div class="detail-section">' +
             '<p class="detail-section-title">Execution history</p>' +
-            '<table class="exec-history-table"><thead><tr><th>Stage</th><th>Turns</th><th>Tokens</th><th>Outcome</th></tr></thead>' +
+            '<table class="exec-history-table"><thead><tr><th>Stage</th><th>Turns</th><th>Tokens</th><th>In</th><th>Out</th><th>Outcome</th></tr></thead>' +
             '<tbody>' + execRows + '</tbody></table>' +
             '</div>';
 
@@ -1204,11 +1204,11 @@ function renderDetailPanel(row: RuntimeSnapshot["running"][number]): string {
 
   const execHistoryRows =
     row.execution_history.length === 0
-      ? `<tr><td colspan="4" class="muted">No completed stages.</td></tr>`
+      ? `<tr><td colspan="6" class="muted">No completed stages.</td></tr>`
       : row.execution_history
           .map(
             (s) =>
-              `<tr><td>${escapeHtml(s.stageName)}</td><td class="numeric">${formatInteger(s.turns)}</td><td class="numeric">${formatInteger(s.totalTokens)}</td><td>${renderOutcomeLabel(s.outcome)}</td></tr>`,
+              `<tr><td>${escapeHtml(s.stageName)}</td><td class="numeric">${formatInteger(s.turns)}</td><td class="numeric">${formatInteger(s.totalTokens)}</td><td class="numeric">${formatInteger(s.inputTokens ?? 0)}</td><td class="numeric">${formatInteger(s.outputTokens ?? 0)}</td><td>${renderOutcomeLabel(s.outcome)}</td></tr>`,
           )
           .join("");
 
@@ -1216,7 +1216,7 @@ function renderDetailPanel(row: RuntimeSnapshot["running"][number]): string {
     <div class="detail-section">
       <p class="detail-section-title">Execution history</p>
       <table class="exec-history-table">
-        <thead><tr><th>Stage</th><th>Turns</th><th>Tokens</th><th>Outcome</th></tr></thead>
+        <thead><tr><th>Stage</th><th>Turns</th><th>Tokens</th><th>In</th><th>Out</th><th>Outcome</th></tr></thead>
         <tbody>${execHistoryRows}</tbody>
       </table>
     </div>`;
