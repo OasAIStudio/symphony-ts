@@ -1,4 +1,3 @@
-import analysisData from "./data/analysis.json";
 import {
   EfficiencyScorecard,
   ExecutiveSummary,
@@ -12,6 +11,7 @@ import {
   StageEfficiency,
   reportCSS,
 } from "./components/index.ts";
+import analysisData from "./data/analysis.json";
 import type { AnalysisData, Inflection, Outlier } from "./types.ts";
 
 const data = analysisData as AnalysisData;

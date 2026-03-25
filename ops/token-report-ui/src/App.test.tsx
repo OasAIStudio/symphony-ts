@@ -1,7 +1,6 @@
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import App from "./App.tsx";
-import analysisData from "./data/analysis.json";
 import {
   EfficiencyScorecard,
   ExecutiveSummary,
@@ -16,6 +15,7 @@ import {
   StageUtilizationChart,
   TicketCostChart,
 } from "./components/index.ts";
+import analysisData from "./data/analysis.json";
 import {
   buildAreaString,
   buildPointsString,
