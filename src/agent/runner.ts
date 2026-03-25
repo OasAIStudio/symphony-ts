@@ -228,6 +228,10 @@ export class AgentRunner {
       await cleanupWorkspaceArtifacts(workspace.path);
       const workspacePath = workspace.path;
 
+      console.warn(
+        `[agent-runner] ${issue.identifier}: Using workspace path ${workspacePath}`,
+      );
+
       await this.hooks.run({
         name: "beforeRun",
         workspacePath: workspace.path,
@@ -256,6 +260,14 @@ export class AgentRunner {
         dynamicTools: this.createDynamicTools(),
         onEvent: (event) => {
           applyCodexEventToSession(liveSession, event);
+          if (
+            event.event === "session_started" &&
+            "codexAppServerPid" in event
+          ) {
+            console.warn(
+              `[agent-runner] ${issue.identifier}: CC process spawned with PID ${event.codexAppServerPid}`,
+            );
+          }
           this.onEvent?.({
             ...event,
             issueId: issue.id,

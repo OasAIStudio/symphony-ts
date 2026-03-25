@@ -3597,3 +3597,125 @@ describe("classifyExitOutcome", () => {
     expect(classifyExitOutcome("error", 1, undefined)).toBe("error");
   });
 });
+
+describe("dispatch failure diagnostics", () => {
+  it("logs error message and stack trace to session log on dispatch failure", async () => {
+    const warnings: unknown[][] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args);
+    };
+
+    try {
+      const spawnError = new Error("spawn failed: ENOENT");
+      const orchestrator = new OrchestratorCore({
+        config: createConfig(),
+        tracker: createTracker({
+          candidates: [createIssue({ id: "1", identifier: "ISSUE-1" })],
+        }),
+        spawnWorker: async () => {
+          throw spawnError;
+        },
+        timerScheduler: createFakeTimerScheduler(),
+        now: () => new Date("2026-03-06T00:00:05.000Z"),
+      });
+
+      await orchestrator.pollTick();
+
+      const dispatchWarning = warnings.find(
+        (args) =>
+          typeof args[0] === "string" && args[0].includes("Dispatch failure"),
+      );
+      expect(dispatchWarning).toBeDefined();
+      // Error message includes the issue identifier for correlation
+      expect(dispatchWarning![0]).toContain("ISSUE-1");
+      expect(dispatchWarning![0]).toContain("spawn failed: ENOENT");
+      // Stack trace is logged as the second argument
+      expect(typeof dispatchWarning![1]).toBe("string");
+      expect(dispatchWarning![1] as string).toContain("spawn failed: ENOENT");
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+
+  it("captures error message in running entry failureReason field", async () => {
+    let capturedFailureReason: string | null | undefined;
+    const origWarn = console.warn;
+    console.warn = () => {};
+
+    try {
+      const orchestrator = new OrchestratorCore({
+        config: createConfig(),
+        tracker: createTracker({
+          candidates: [createIssue({ id: "1", identifier: "ISSUE-1" })],
+        }),
+        spawnWorker: async () => {
+          throw new Error("workspace init failed");
+        },
+        timerScheduler: createFakeTimerScheduler(),
+        now: () => new Date("2026-03-06T00:00:05.000Z"),
+      });
+
+      // Intercept state to capture the transient running entry
+      const state = orchestrator.getState();
+      const origRunning = state.running;
+      const handler: ProxyHandler<typeof state.running> = {
+        set(_target, prop, value) {
+          if (
+            typeof prop === "string" &&
+            value?.failureReason &&
+            !capturedFailureReason
+          ) {
+            capturedFailureReason = value.failureReason;
+          }
+          _target[prop as string] = value;
+          return true;
+        },
+        deleteProperty(_target, prop) {
+          delete _target[prop as string];
+          return true;
+        },
+        get(_target, prop, receiver) {
+          return Reflect.get(_target, prop, receiver);
+        },
+      };
+      (state as { running: typeof state.running }).running = new Proxy(
+        origRunning,
+        handler,
+      );
+
+      await orchestrator.pollTick();
+
+      expect(capturedFailureReason).toBe("workspace init failed");
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+
+  it("stores error message in retry entry on dispatch failure", async () => {
+    const origWarn = console.warn;
+    console.warn = () => {};
+
+    try {
+      const orchestrator = new OrchestratorCore({
+        config: createConfig(),
+        tracker: createTracker({
+          candidates: [createIssue({ id: "1", identifier: "ISSUE-1" })],
+        }),
+        spawnWorker: async () => {
+          throw new Error("connection refused");
+        },
+        timerScheduler: createFakeTimerScheduler(),
+        now: () => new Date("2026-03-06T00:00:05.000Z"),
+      });
+
+      await orchestrator.pollTick();
+
+      const retry = orchestrator.getState().retryAttempts["1"];
+      expect(retry).toBeDefined();
+      expect(retry!.error).toBe("connection refused");
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+});

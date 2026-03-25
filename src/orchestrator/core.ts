@@ -1423,17 +1423,40 @@ export class OrchestratorCore {
         startedAt: formatEasternTimestamp(this.now()),
         workerHandle: spawned.workerHandle,
         monitorHandle: spawned.monitorHandle,
+        failureReason: null,
       };
       this.state.running[issue.id] = runEntry;
       this.state.claimed.add(issue.id);
       this.clearRetryEntry(issue.id);
       return true;
-    } catch {
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      console.warn(
+        `[orchestrator] ${issue.identifier}: Dispatch failure: ${errorMessage}`,
+        errorStack ?? "",
+      );
+      // Capture failure in a transient running entry for observability before
+      // scheduling the retry. The entry is removed so it does not block retry
+      // dispatch eligibility.
+      const failedEntry: RunningEntry = {
+        ...createEmptyLiveSession(),
+        issue,
+        identifier: issue.identifier,
+        retryAttempt: normalizeRetryAttempt(attempt),
+        startedAt: formatEasternTimestamp(this.now()),
+        workerHandle: null,
+        monitorHandle: null,
+        failureReason: errorMessage,
+      };
+      this.state.running[issue.id] = failedEntry;
       this.scheduleRetry(issue.id, nextRetryAttempt(attempt), {
         identifier: issue.identifier,
-        error: "failed to spawn agent",
+        error: errorMessage,
         delayType: "failure",
       });
+      delete this.state.running[issue.id];
       return false;
     }
   }

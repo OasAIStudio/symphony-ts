@@ -970,3 +970,87 @@ const ISSUE_FIXTURE: Issue = {
   createdAt: "2026-03-06T00:00:00.000Z",
   updatedAt: "2026-03-06T01:00:00.000Z",
 };
+
+describe("Agent runner startup diagnostics", () => {
+  it("logs the workspace path being used", async () => {
+    const root = await createRoot();
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    };
+
+    try {
+      const tracker = createTracker({
+        refreshStates: [
+          { id: "issue-1", identifier: "ABC-123", state: "Done" },
+        ],
+      });
+      const runner = new AgentRunner({
+        config: createConfig(root, "unused"),
+        tracker,
+        createCodexClient: (input) =>
+          createStubCodexClient([], input, {
+            statuses: ["completed"],
+          }),
+      });
+
+      await runner.run({
+        issue: ISSUE_FIXTURE,
+        attempt: null,
+      });
+
+      const workspaceLog = warnings.find(
+        (msg) =>
+          msg.includes("[agent-runner]") &&
+          msg.includes("ABC-123") &&
+          msg.includes("Using workspace path"),
+      );
+      expect(workspaceLog).toBeDefined();
+      expect(workspaceLog).toContain(root);
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+
+  it("logs CC process spawn confirmation with PID", async () => {
+    const root = await createRoot();
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    };
+
+    try {
+      const tracker = createTracker({
+        refreshStates: [
+          { id: "issue-1", identifier: "ABC-123", state: "Done" },
+        ],
+      });
+      const runner = new AgentRunner({
+        config: createConfig(root, "unused"),
+        tracker,
+        createCodexClient: (input) =>
+          createStubCodexClient([], input, {
+            statuses: ["completed"],
+          }),
+      });
+
+      await runner.run({
+        issue: ISSUE_FIXTURE,
+        attempt: null,
+      });
+
+      const pidLog = warnings.find(
+        (msg) =>
+          msg.includes("[agent-runner]") &&
+          msg.includes("ABC-123") &&
+          msg.includes("CC process spawned with PID"),
+      );
+      expect(pidLog).toBeDefined();
+      expect(pidLog).toContain("1001");
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+});

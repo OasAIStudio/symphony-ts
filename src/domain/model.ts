@@ -161,6 +161,7 @@ export interface RunningEntry extends LiveSession {
   startedAt: string;
   workerHandle: unknown;
   monitorHandle: unknown;
+  failureReason: string | null;
 }
 
 export interface StageRecord {

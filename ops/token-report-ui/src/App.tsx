@@ -1,61 +1,86 @@
-// TODO: SYMPH-142+ will replace this with actual report components
-// using Paper `get_jsx` output as the starting point
 import analysisData from "./analysis.json";
+import {
+  EfficiencyScorecard,
+  ExecutiveSummary,
+  IssueLeaderboard,
+  OutlierAnalysis,
+  PerProductBreakdown,
+  PerStageTrend,
+  PerTicketCostTrend,
+  ReportFooter,
+  ReportHeader,
+  StageEfficiency,
+  reportCSS,
+} from "./components/index.ts";
+import type { AnalysisData, Inflection, Outlier } from "./types.ts";
+
+const data = analysisData as AnalysisData;
+
+/** Normalize inflections/outliers from the dual union shape. */
+function normalizeInflections(raw: AnalysisData["inflections"]): Inflection[] {
+  if (Array.isArray(raw)) return raw;
+  return raw?.items ?? [];
+}
+
+function normalizeOutliers(raw: AnalysisData["outliers"]): Outlier[] {
+  if (Array.isArray(raw)) return raw;
+  return raw?.items ?? [];
+}
 
 export default function App() {
-  const data = analysisData;
+  const es = data.executive_summary;
+  const sc = data.efficiency_scorecard;
+  const inflections = normalizeInflections(data.inflections);
+  const outliers = normalizeOutliers(data.outliers);
+
+  // Compute derived ExecutiveSummary props from raw analysis.json
+  const totalTokens = es.total_tokens.value;
+  const tokensPerIssueMedian = data.per_ticket_trend.median;
+  const tokensPerIssueMean = data.per_ticket_trend.mean;
+  const uniqueIssues = es.unique_issues.value;
+  const cacheHitRate = (sc.cache_efficiency.current ?? 0) * 100;
+
+  // WoW deltas computed from scorecard trends where available
+  const cacheWow =
+    sc.cache_efficiency.trend_7d != null
+      ? Math.round(
+          ((sc.cache_efficiency.current - sc.cache_efficiency.trend_7d) /
+            (sc.cache_efficiency.trend_7d || 1)) *
+            100,
+        )
+      : null;
+
   return (
-    <div
-      style={{
-        background: "#0d1117",
-        color: "#c9d1d9",
-        minHeight: "100vh",
-        padding: "2rem",
-        fontFamily: "system-ui, sans-serif",
-      }}
-    >
-      <h1 style={{ color: "#58a6ff" }}>Token Report</h1>
-      <p>
-        Analyzed at: {data.analyzed_at} &middot; Data span:{" "}
-        {data.data_span_days} days &middot; Records: {data.record_count}
-      </p>
-      <section>
-        <h2 style={{ color: "#58a6ff" }}>Executive Summary</h2>
-        <ul>
-          <li>
-            Total tokens:{" "}
-            {data.executive_summary.total_tokens.value.toLocaleString()}
-          </li>
-          <li>Total stages: {data.executive_summary.total_stages.value}</li>
-          <li>Unique issues: {data.executive_summary.unique_issues.value}</li>
-        </ul>
-      </section>
-      <section>
-        <h2 style={{ color: "#58a6ff" }}>Efficiency Scorecard</h2>
-        <ul>
-          <li>
-            Cache efficiency:{" "}
-            {(data.efficiency_scorecard.cache_efficiency.current * 100).toFixed(
-              1,
-            )}
-            %
-          </li>
-          <li>
-            Output ratio:{" "}
-            {(data.efficiency_scorecard.output_ratio.current * 100).toFixed(1)}%
-          </li>
-          <li>
-            Tokens per turn:{" "}
-            {Math.round(
-              data.efficiency_scorecard.tokens_per_turn.current,
-            ).toLocaleString()}
-          </li>
-          <li>
-            First pass rate:{" "}
-            {data.efficiency_scorecard.first_pass_rate.current.toFixed(1)}%
-          </li>
-        </ul>
-      </section>
-    </div>
+    <>
+      {/* biome-ignore lint/security/noDangerouslySetInnerHtml: report CSS is a static build-time string, not user input */}
+      <style dangerouslySetInnerHTML={{ __html: reportCSS }} />
+      <ReportHeader
+        today={data.analyzed_at.slice(0, 10)}
+        recordCount={data.record_count}
+        dataSpanDays={data.data_span_days}
+      />
+      <ExecutiveSummary
+        totalTokens={totalTokens}
+        tokensDelta={null}
+        tokensPerIssueMedian={tokensPerIssueMedian}
+        tokensPerIssueMean={tokensPerIssueMean}
+        tokPerIssueWow={null}
+        uniqueIssues={uniqueIssues}
+        cacheHitRate={cacheHitRate}
+        cacheWow={cacheWow}
+      />
+      <EfficiencyScorecard scorecard={sc} />
+      <PerStageTrend
+        perStageTrend={data.per_stage_trend}
+        inflections={inflections}
+      />
+      <PerTicketCostTrend perTicket={data.per_ticket_trend} />
+      <OutlierAnalysis outliers={outliers} />
+      {/* TODO: IssueLeaderboard data not in current analysis.json shape */}
+      <IssueLeaderboard leaderboard={[]} />
+      <StageEfficiency perStageSpend={data.per_stage_spend} />
+      <PerProductBreakdown perProduct={data.per_product} />
+      <ReportFooter />
+    </>
   );
 }

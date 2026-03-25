@@ -702,6 +702,7 @@ function createRunningEntry(): RunningEntry {
     startedAt: "2026-03-06T10:00:00.000Z",
     workerHandle: null,
     monitorHandle: null,
+    failureReason: null,
   };
 }
 
