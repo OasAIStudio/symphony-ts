@@ -7,14 +7,14 @@
  *              enrich with Linear issue titles, append to token-history.jsonl (SYMPH-129)
  *   analyze  — Compute efficiency metrics, trends, outliers from token-history.jsonl (SYMPH-130)
  *   render   — Generate self-contained HTML report with inline SVG charts (SYMPH-131)
- *   slack    — Post ≤15-line digest to $SLACK_WEBHOOK_URL (SYMPH-131)
+ *   slack    — Post ≤15-line digest via $SLACK_BOT_TOKEN (SYMPH-131)
  *   rotate   — Compress/delete old logs and reports (SYMPH-131)
  *
  * Environment:
  *   SYMPHONY_HOME      (default $HOME/.symphony)
  *   SYMPHONY_LOG_DIR   (default $HOME/Library/Logs/symphony)
  *   LINEAR_API_KEY     — used by `linear` CLI; graceful degradation without it
- *   SLACK_WEBHOOK_URL  — Slack incoming webhook; graceful degradation without it
+ *   SLACK_BOT_TOKEN    — Slack bot token; graceful degradation without it
  *   BASE_URL           — hostname:port for report links (never hardcode localhost)
  *   TOKEN_REPORT_PORT  — port for report server (default 8090)
  *
@@ -1839,6 +1839,65 @@ function runRender() {
 }
 
 // ---------------------------------------------------------------------------
+// Concern-flag helper — SYMPH-152
+// ---------------------------------------------------------------------------
+
+/**
+ * Build an array of narrative concern strings based on scorecard thresholds.
+ * Returns empty array when all metrics are healthy.
+ *
+ * Thresholds:
+ *   - stage failure >20%    (any stage in failure_rate.current)
+ *   - tokens/turn >100K     (tokens_per_turn.current)
+ *   - cache <50%            (cache_efficiency.current)
+ *   - first-pass <70%       (first_pass_rate.current)
+ *   - wasted context >10%   (wasted_context.current)
+ */
+function buildConcerns(scorecard) {
+  const concerns = [];
+
+  // Check per-stage failure rates
+  const failureRates = scorecard?.failure_rate?.current;
+  if (failureRates && typeof failureRates === "object") {
+    for (const [stage, rate] of Object.entries(failureRates)) {
+      if (rate > 20) {
+        concerns.push(
+          `⚠️ Stage *${stage}* failure rate is ${round(rate, 1)}% (threshold: 20%)`,
+        );
+      }
+    }
+  }
+
+  // Tokens per turn
+  const tpt = scorecard?.tokens_per_turn?.current ?? 0;
+  if (tpt > 100000) {
+    concerns.push(`⚠️ Tokens/turn is *${fmtNum(tpt)}* (threshold: 100K)`);
+  }
+
+  // Cache efficiency
+  const cache = scorecard?.cache_efficiency?.current ?? 100;
+  if (cache < 50) {
+    concerns.push(`⚠️ Cache hit rate is *${round(cache, 1)}%* (threshold: 50%)`);
+  }
+
+  // First-pass success rate
+  const fp = scorecard?.first_pass_rate?.current ?? 100;
+  if (fp < 70) {
+    concerns.push(
+      `⚠️ First-pass success is *${round(fp, 1)}%* (threshold: 70%)`,
+    );
+  }
+
+  // Wasted context
+  const wc = scorecard?.wasted_context?.current ?? 0;
+  if (wc > 10) {
+    concerns.push(`⚠️ Wasted context is *${round(wc, 1)}%* (threshold: 10%)`);
+  }
+
+  return concerns;
+}
+
+// ---------------------------------------------------------------------------
 // Slack subcommand — SYMPH-131
 // ---------------------------------------------------------------------------
 
@@ -1888,11 +1947,13 @@ function runSlack() {
     topConsumer = `${sorted[0][0]} (${fmtNum(sorted[0][1])})`;
   }
 
-  // Report link — always use BASE_URL; fall back to pro16.local:{port}
+  // Report link — always use BASE_URL env var; no hardcoded hostname fallback
   const reportPort = process.env.TOKEN_REPORT_PORT || "8090";
-  const baseUrl = process.env.BASE_URL || `pro16.local:${reportPort}`;
+  let rawBase = process.env.BASE_URL || `localhost:${reportPort}`;
+  // Strip protocol prefix if present so we can prepend http:// uniformly
+  rawBase = rawBase.replace(/^https?:\/\//, "").replace(/\/+$/, "");
   const today = dateKey(new Date());
-  const reportUrl = `http://${baseUrl}/${today}.html`;
+  const reportUrl = `http://${rawBase}/${today}.html`;
 
   // --- Section 1: Title ---
   const sections = [];
@@ -1901,9 +1962,13 @@ function runSlack() {
   // --- Section 2: Executive Summary ---
   const spanDays = analysis.data_span_days ?? 0;
   const tier = analysis.cold_start_tier ?? "unknown";
-  sections.push(
-    `*Executive Summary*\n> *${fmtNum(es.total_tokens?.value)}* tokens across *${fmtNum(es.unique_issues?.value)}* issues over *${spanDays}d* (tier: ${tier})\n> ${fmtNum(es.total_stages?.value ?? 0)} total stages completed`,
-  );
+  const coldStart = spanDays < 7;
+  let execSummary = `*Executive Summary*\n> *${fmtNum(es.total_tokens?.value)}* tokens across *${fmtNum(es.unique_issues?.value)}* issues over *${spanDays}d* (tier: ${tier})\n> ${fmtNum(es.total_stages?.value ?? 0)} total stages completed`;
+  if (coldStart) {
+    execSummary +=
+      "\n> _⚠️ Cold start — less than 7d of data; WoW deltas not available_";
+  }
+  sections.push(execSummary);
 
   // --- Section 3: Tokens per Issue ---
   sections.push(
@@ -1925,15 +1990,23 @@ function runSlack() {
     `*Efficiency Scorecard*\n> Cache hit rate: *${cacheEff}%* (7d trend: ${cacheTrend7d >= 0 ? "+" : ""}${cacheTrend7d}%)\n> Output ratio: *${outputRatio}%* · First-pass success: *${firstPass}%*\n> Tokens/turn: *${tokPerTurn}* · Wasted context: *${wastedCtx}%*`,
   );
 
+  // --- Section 4b: Concerns (narrative commentary) — SYMPH-152 ---
+  const concerns = buildConcerns(sc);
+  if (concerns.length > 0) {
+    sections.push(`*Concerns*\n${concerns.map((c) => `> ${c}`).join("\n")}`);
+  } else {
+    sections.push("*Concerns*\n> ✅ All metrics within healthy thresholds");
+  }
+
   // --- Section 5: Per-Stage Spend ---
   const stageEntries = Object.entries(perStageSpend);
   if (stageEntries.length > 0) {
     const stageLines = stageEntries
-      .sort((a, b) => (b[1]?.total ?? 0) - (a[1]?.total ?? 0))
+      .sort((a, b) => (b[1]?.total_tokens ?? 0) - (a[1]?.total_tokens ?? 0))
       .slice(0, 5)
       .map(
         ([stage, data]) =>
-          `>  • ${stage}: *${fmtNum(data?.total ?? 0)}* tokens (${fmtNum(data?.count ?? 0)} stages)`,
+          `>  • ${stage}: *${fmtNum(data?.total_tokens ?? 0)}* tokens (${fmtNum(data?.count ?? 0)} stages)`,
       );
     sections.push(`*Per-Stage Spend (top 5)*\n${stageLines.join("\n")}`);
   } else {
@@ -1948,7 +2021,7 @@ function runSlack() {
       .slice(0, 5)
       .map(
         ([product, data]) =>
-          `>  • ${product}: *${fmtNum(data?.total_tokens ?? 0)}* tokens (${fmtNum(data?.stage_count ?? 0)} stages)`,
+          `>  • ${product}: *${fmtNum(data?.total_tokens ?? 0)}* tokens (${fmtNum(data?.total_stages ?? 0)} stages)`,
       );
     sections.push(
       `*Per-Product Breakdown (top 5)*\n${productLines.join("\n")}`,

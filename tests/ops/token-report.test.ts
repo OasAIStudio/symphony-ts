@@ -6,7 +6,7 @@
  * synthetic symphony.jsonl events, then invoking the extract subcommand.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   existsSync,
@@ -1064,12 +1064,16 @@ function runSlack(symphonyHome: string, extraEnv: Record<string, string> = {}) {
     ...extraEnv,
   };
   try {
-    const stdout = execFileSync(NODE_BIN, [SCRIPT_PATH, "slack"], {
+    const result = spawnSync(NODE_BIN, [SCRIPT_PATH, "slack"], {
       env,
       encoding: "utf-8",
       timeout: 15000,
     });
-    return { stdout, stderr: "", exitCode: 0 };
+    return {
+      stdout: result.stdout || "",
+      stderr: result.stderr || "",
+      exitCode: result.status ?? 0,
+    };
   } catch (err: unknown) {
     const e = err as { stdout?: string; stderr?: string; status?: number };
     return {
@@ -1091,27 +1095,81 @@ describe("token-report.mjs slack", () => {
     rmSync(symphonyHome, { recursive: true, force: true });
   });
 
-  it("graceful degradation when SLACK_WEBHOOK_URL not set", () => {
+  it("graceful degradation when SLACK_BOT_TOKEN not set", () => {
     const records = generateDaysOfRecords(5, 2);
     writeTokenHistory(symphonyHome, records);
     writeConfigHistory(symphonyHome, [makeConfigSnapshot()]);
 
     const env: Record<string, string> = {};
-    // Explicitly unset SLACK_WEBHOOK_URL
-    process.env.SLACK_WEBHOOK_URL = undefined;
+    // Explicitly unset SLACK_BOT_TOKEN
+    process.env.SLACK_BOT_TOKEN = undefined;
     const { exitCode, stderr } = runSlack(symphonyHome, env);
 
     expect(exitCode).toBe(0);
     // stderr should contain warning (captured by parent process)
   });
 
-  it("exits 0 when SLACK_WEBHOOK_URL is empty", () => {
+  it("exits 0 when SLACK_BOT_TOKEN is empty", () => {
     const records = generateDaysOfRecords(5, 2);
     writeTokenHistory(symphonyHome, records);
     writeConfigHistory(symphonyHome, [makeConfigSnapshot()]);
 
-    const { exitCode } = runSlack(symphonyHome, { SLACK_WEBHOOK_URL: "" });
+    const { exitCode } = runSlack(symphonyHome, { SLACK_BOT_TOKEN: "" });
     expect(exitCode).toBe(0);
+  });
+
+  it("DRY_RUN outputs concerns section and correct field names", () => {
+    const records = generateDaysOfRecords(10, 3);
+    writeTokenHistory(symphonyHome, records);
+    writeConfigHistory(symphonyHome, [makeConfigSnapshot()]);
+
+    const { exitCode, stderr } = runSlack(symphonyHome, {
+      SLACK_BOT_TOKEN: "xoxb-test-token",
+      DRY_RUN: "1",
+    });
+
+    expect(exitCode).toBe(0);
+    // Should contain the concerns section
+    expect(stderr).toContain("Concerns");
+    // Should contain correct field name (total_tokens not total)
+    expect(stderr).toContain("Per-Stage Spend");
+    // Should contain correct field name (total_stages not stage_count)
+    expect(stderr).toContain("Per-Product Breakdown");
+    // Should not contain hardcoded pro16.local
+    expect(stderr).not.toContain("pro16.local");
+  });
+
+  it("DRY_RUN URL uses BASE_URL env var and strips protocol", () => {
+    const records = generateDaysOfRecords(5, 2);
+    writeTokenHistory(symphonyHome, records);
+    writeConfigHistory(symphonyHome, [makeConfigSnapshot()]);
+
+    const { exitCode, stderr } = runSlack(symphonyHome, {
+      SLACK_BOT_TOKEN: "xoxb-test-token",
+      DRY_RUN: "1",
+      BASE_URL: "http://myhost.example.com:9090",
+    });
+
+    expect(exitCode).toBe(0);
+    // Should have stripped http:// and produced clean URL
+    expect(stderr).toContain("myhost.example.com:9090/");
+    expect(stderr).not.toContain("http://http://");
+  });
+
+  it("DRY_RUN with cold start notes data tier", () => {
+    // 3 days of data → cold start (< 7d)
+    const records = generateDaysOfRecords(3, 2);
+    writeTokenHistory(symphonyHome, records);
+    writeConfigHistory(symphonyHome, [makeConfigSnapshot()]);
+
+    const { exitCode, stderr } = runSlack(symphonyHome, {
+      SLACK_BOT_TOKEN: "xoxb-test-token",
+      DRY_RUN: "1",
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toContain("Cold start");
+    expect(stderr).toContain("WoW deltas not available");
   });
 });
 
