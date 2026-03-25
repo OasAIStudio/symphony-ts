@@ -184,6 +184,27 @@ If the input is an existing `Idea` issue:
 
 ## Step 2: Generate Spec Content
 
+### Design Bundle Validation
+
+Before generating any spec content, check whether the brain dump or skill arguments reference a design bundle path matching `pipeline-config/design-refs/*/`.
+
+If a design bundle path is detected:
+
+1. Run `git ls-files <path>` from the repo root to check if the bundle is tracked in git.
+2. If the output is **empty** (no tracked files), stop and display this error:
+
+```
+Design bundle at `<path>` is not tracked in git.
+Run `/export-design` first, or:
+  git add pipeline-config/design-refs/<spec-identifier>/ && git commit -m "Add design bundle for <spec-identifier>" && git push
+```
+
+3. If tracked (non-empty output), continue normally.
+
+**Why this matters:** The implementation agent accesses the repo via `git clone` on a remote machine. A design bundle that exists only on the local filesystem will be invisible to the pipeline agent. This gate catches that before spec generation proceeds.
+
+### Generate Spec
+
 If Step 0 ran, use the Codebase Context Report to write accurate file paths in Task Scope fields, follow the structure described in Existing Patterns, reference the correct framework and runtime in verify lines, and set accurate Out of Scope boundaries based on what the codebase actually contains.
 
 Generate the spec as a single markdown document. This will become the Linear parent issue description.
@@ -403,6 +424,7 @@ Idea → Draft
 - **Verify lines are NOT tests.** They are behavioral checks run by the implementing agent. They should be fast, self-contained, and deterministic.
 - **One-way sync only.** Never parse spec content back from Linear. The skill is the source of truth during iteration; Linear is the store.
 - **Don't generate design.md for STANDARD features.** Only COMPLEX features need architectural documentation.
+- **Design bundles must be in git before spec generation.** The implementation agent accesses them via `git clone`, not the local filesystem. If `/export-design` was run but the bundle wasn't pushed, the pipeline agent on the remote machine won't have it. The Step 2 validation catches local-only bundles.
 
 ## Related Skills
 
