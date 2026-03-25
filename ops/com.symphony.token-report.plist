@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.symphony.token-report.plist — Daily token report generation
+  Install: cp ops/com.symphony.token-report.plist ~/Library/LaunchAgents/
+  Load:    launchctl load ~/Library/LaunchAgents/com.symphony.token-report.plist
+
+  Timezone assumption: StartCalendarInterval uses local time.
+  This plist is configured for 06:00 local time, which on pro16 is
+  America/New_York (ET). launchd uses the system timezone — if the
+  machine moves to a different timezone, the job will fire at 06:00
+  in that new local time.
+
+  SYMPH-131
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.symphony.token-report</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/clawdilize/projects/symphony-ts/ops/token-report.sh</string>
+        <string>daily</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/clawdilize/projects/symphony-ts</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>6</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/clawdilize</string>
+        <key>NODE_ENV</key>
+        <string>production</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/clawdilize/.symphony/logs/token-report-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/clawdilize/.symphony/logs/token-report-stderr.log</string>
+
+    <key>KeepAlive</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

@@ -1,0 +1,133 @@
+{
+  "cold_start_tier": ">=30d",
+  "analyzed_at": "2026-03-20T08:00:00.000Z",
+  "data_span_days": 45,
+  "record_count": 312,
+  "efficiency_scorecard": {
+    "cache_efficiency": {
+      "current": 0.72,
+      "trend_7d": 0.68,
+      "trend_30d": 0.65
+    },
+    "output_ratio": { "current": 0.34, "trend_7d": 0.31, "trend_30d": 0.29 },
+    "wasted_context": { "current": 0.08, "trend_7d": 0.1, "trend_30d": 0.12 },
+    "tokens_per_turn": {
+      "current": 4820,
+      "trend_7d": 5100,
+      "trend_30d": 5400
+    },
+    "first_pass_rate": {
+      "current": 78.5,
+      "trend_7d": 75.2,
+      "trend_30d": 72.0
+    },
+    "failure_rate": {
+      "current": { "investigate": 0.02, "implement": 0.08, "validate": 0.05 },
+      "trend_7d": { "investigate": 0.03, "implement": 0.1, "validate": 0.06 },
+      "trend_30d": {
+        "investigate": 0.04,
+        "implement": 0.12,
+        "validate": 0.07
+      }
+    }
+  },
+  "executive_summary": {
+    "total_tokens": { "value": 18420000 },
+    "total_stages": { "value": 312 },
+    "unique_issues": { "value": 47 },
+    "data_span_days": 45
+  },
+  "per_stage_spend": {
+    "investigate": {
+      "total_tokens": 3200000,
+      "count": 85,
+      "completed": 82,
+      "failed": 3
+    },
+    "implement": {
+      "total_tokens": 9800000,
+      "count": 120,
+      "completed": 108,
+      "failed": 12
+    },
+    "validate": {
+      "total_tokens": 2100000,
+      "count": 62,
+      "completed": 58,
+      "failed": 4
+    },
+    "spec-gen": {
+      "total_tokens": 1500000,
+      "count": 25,
+      "completed": 25,
+      "failed": 0
+    },
+    "review": {
+      "total_tokens": 1820000,
+      "count": 20,
+      "completed": 19,
+      "failed": 1
+    }
+  },
+  "per_stage_trend": {
+    "investigate": { "daily_avg": 71111, "wow_delta": -0.05 },
+    "implement": { "daily_avg": 217778, "wow_delta": 0.03 },
+    "validate": { "daily_avg": 46667, "wow_delta": -0.02 },
+    "spec-gen": { "daily_avg": 33333, "wow_delta": 0.0 },
+    "review": { "daily_avg": 40444, "wow_delta": -0.01 }
+  },
+  "per_ticket_trend": {
+    "median": 52000,
+    "mean": 59000,
+    "ticket_count": 47
+  },
+  "per_product": {
+    "symphony-ts": {
+      "total_tokens": 12500000,
+      "total_stages": 210,
+      "unique_issues": 30
+    },
+    "jony-agent": {
+      "total_tokens": 4200000,
+      "total_stages": 72,
+      "unique_issues": 12
+    },
+    "stickerlabs": {
+      "total_tokens": 1720000,
+      "total_stages": 30,
+      "unique_issues": 5
+    }
+  },
+  "inflections": [
+    {
+      "date": "2026-03-05",
+      "metric": "tokens_per_turn",
+      "direction": "down",
+      "magnitude": 0.15,
+      "context": "Switched to prompt caching strategy"
+    },
+    {
+      "date": "2026-03-12",
+      "metric": "cache_efficiency",
+      "direction": "up",
+      "magnitude": 0.08,
+      "context": "Enabled extended cache TTL"
+    }
+  ],
+  "outliers": [
+    {
+      "issue": "SYMPH-98",
+      "stage": "implement",
+      "tokens": 450000,
+      "z_score": 3.2,
+      "reason": "Large refactor with multiple file changes"
+    },
+    {
+      "issue": "JONY-42",
+      "stage": "investigate",
+      "tokens": 180000,
+      "z_score": 2.8,
+      "reason": "Deep codebase exploration across 3 repos"
+    }
+  ]
+}

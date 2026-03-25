@@ -1,0 +1,552 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# symphony-onboard — onboard a new project into the Symphony pipeline
+# Usage: symphony-onboard --product <name> --team-key <key> --team-name <name> --description <desc> [--repo <owner/repo>] [--dry-run]
+
+SCRIPT_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
+SYMPHONY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+TEMPLATE_DIR="$SYMPHONY_ROOT/pipeline-config/templates"
+WORKFLOW_DIR="$SYMPHONY_ROOT/pipeline-config/workflows"
+PORTS_FILE="$SYMPHONY_ROOT/pipeline-config/ports.json"
+RUN_PIPELINE="$SYMPHONY_ROOT/run-pipeline.sh"
+
+# Colors (disabled if not a terminal)
+if [[ -t 1 ]]; then
+  RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; CYAN='\033[0;36m'; NC='\033[0m'
+else
+  RED=''; GREEN=''; YELLOW=''; CYAN=''; NC=''
+fi
+
+info()  { echo -e "${CYAN}▸${NC} $*"; }
+ok()    { echo -e "${GREEN}✓${NC} $*"; }
+warn()  { echo -e "${YELLOW}⚠${NC} $*" >&2; }
+die()   { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
+
+# --- Temp directory cleanup ---
+
+TMPDIR_ONBOARD=""
+cleanup() {
+  if [[ -n "$TMPDIR_ONBOARD" && -d "$TMPDIR_ONBOARD" ]]; then
+    rm -rf "$TMPDIR_ONBOARD"
+  fi
+}
+trap cleanup EXIT
+
+# --- Helpers ---
+
+usage() {
+  cat <<EOF
+symphony-onboard — onboard a new project into the Symphony pipeline
+
+Usage: symphony-onboard [flags]
+
+Required flags:
+  --product <name>             Product name (e.g., "my-project")
+  --team-key <key>             Linear team key (e.g., "MYPROJ")
+  --team-name <name>           Linear team display name (e.g., "My Project Team")
+  --description <desc>         Project description for Linear
+
+Optional flags:
+  --repo <owner/repo>          GitHub repository (default: mobilyze-llc/{product})
+  --dry-run                    Show what each step would do without executing
+  -h, --help                   Show this help message
+
+Environment:
+  LINEAR_API_KEY               Linear API token (required)
+
+Steps performed:
+   1. Duplicate detection (check ports.json)
+   2. Linear team creation (idempotent)
+   3. Linear project creation + team linking (idempotent)
+   4. Port auto-allocation (max+1 from ports.json)
+   5. run-pipeline.sh auto-registration
+   6. Generate WORKFLOW file from template
+   7. Verify repo exists
+   8. Generate CLAUDE.md in target repo
+   9. Copy CI minimal workflow to target repo
+  10. Set up GitHub merge queue via Rulesets API
+  11. Summary
+
+EOF
+}
+
+run_or_dry() {
+  if $DRY_RUN; then
+    info "[dry-run] $*"
+  else
+    "$@"
+  fi
+}
+
+# --- Precondition checks ---
+
+check_gh_auth() {
+  gh auth status >/dev/null 2>&1 || die "GitHub CLI not authenticated. Run 'gh auth login' first."
+}
+
+check_linear_key() {
+  [[ -n "${LINEAR_API_KEY:-}" ]] || die "LINEAR_API_KEY environment variable is not set."
+}
+
+check_repo_exists() {
+  local repo="$1"
+  gh api "/repos/$repo" --silent >/dev/null 2>&1 || die "Repository '$repo' not found or not accessible."
+}
+
+check_templates() {
+  [[ -f "$TEMPLATE_DIR/WORKFLOW-template.md" ]] || die "WORKFLOW template not found at $TEMPLATE_DIR/WORKFLOW-template.md"
+  [[ -f "$TEMPLATE_DIR/CLAUDE.md.tmpl" ]] || die "CLAUDE.md template not found at $TEMPLATE_DIR/CLAUDE.md.tmpl"
+  [[ -f "$TEMPLATE_DIR/ci-minimal.yml" ]] || die "CI minimal template not found at $TEMPLATE_DIR/ci-minimal.yml"
+}
+
+check_jq() {
+  command -v jq &>/dev/null || die "jq is required but not found. Install it first."
+}
+
+check_ports_file() {
+  [[ -f "$PORTS_FILE" ]] || die "ports.json not found at $PORTS_FILE"
+}
+
+check_run_pipeline() {
+  [[ -f "$RUN_PIPELINE" ]] || die "run-pipeline.sh not found at $RUN_PIPELINE"
+}
+
+check_linear_cli() {
+  command -v linear &>/dev/null || die "linear CLI is required but not found. Install it first."
+}
+
+# --- Flags ---
+
+DRY_RUN=false
+PRODUCT=""
+TEAM_KEY=""
+TEAM_NAME=""
+DESCRIPTION=""
+REPO=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)        DRY_RUN=true ;;
+    --product)        PRODUCT="${2:-}"; [[ -n "$PRODUCT" ]] || die "--product requires a value"; shift ;;
+    --team-key)       TEAM_KEY="${2:-}"; [[ -n "$TEAM_KEY" ]] || die "--team-key requires a value"; shift ;;
+    --team-name)      TEAM_NAME="${2:-}"; [[ -n "$TEAM_NAME" ]] || die "--team-name requires a value"; shift ;;
+    --description)    DESCRIPTION="${2:-}"; [[ -n "$DESCRIPTION" ]] || die "--description requires a value"; shift ;;
+    --repo)           REPO="${2:-}"; [[ -n "$REPO" ]] || die "--repo requires a value"; shift ;;
+    -h|--help)        usage; exit 0 ;;
+    *)                die "Unknown flag: $1" ;;
+  esac
+  shift
+done
+
+# Validate required flags
+[[ -n "$PRODUCT" ]]     || die "Missing required flag: --product"
+[[ -n "$TEAM_KEY" ]]    || die "Missing required flag: --team-key"
+[[ -n "$TEAM_NAME" ]]   || die "Missing required flag: --team-name"
+[[ -n "$DESCRIPTION" ]] || die "Missing required flag: --description"
+
+# Default repo to mobilyze-llc/{product} when not provided
+if [[ -z "$REPO" ]]; then
+  REPO="mobilyze-llc/$PRODUCT"
+fi
+
+# These will be populated by steps 3 and 4
+PROJECT_SLUG=""
+PORT=""
+
+# --- Main ---
+
+if $DRY_RUN; then
+  info "symphony-onboard [DRY RUN]"
+else
+  info "symphony-onboard"
+fi
+info "  product:      $PRODUCT"
+info "  team-key:     $TEAM_KEY"
+info "  team-name:    $TEAM_NAME"
+info "  description:  $DESCRIPTION"
+info "  repo:         $REPO"
+echo ""
+
+# Create temp directory for intermediate files
+TMPDIR_ONBOARD="$(mktemp -d)"
+
+# --- Preconditions ---
+
+info "=== Precondition checks ==="
+check_gh_auth
+ok "GitHub CLI authenticated"
+
+check_linear_key
+ok "LINEAR_API_KEY is set"
+
+check_jq
+ok "jq is available"
+
+check_templates
+ok "All templates found"
+
+check_ports_file
+ok "ports.json found"
+
+check_run_pipeline
+ok "run-pipeline.sh found"
+
+check_linear_cli
+ok "linear CLI available"
+
+echo ""
+
+# --- Step 1: Duplicate detection ---
+
+info "=== Step 1: Duplicate detection ==="
+
+EXISTING_PORT="$(jq -r --arg p "$PRODUCT" '.[$p] // empty' "$PORTS_FILE")"
+if [[ -n "$EXISTING_PORT" ]]; then
+  die "Product '$PRODUCT' already exists in ports.json (port: $EXISTING_PORT). Aborting to prevent duplicate onboarding."
+fi
+ok "Product '$PRODUCT' not found in ports.json — proceeding"
+
+echo ""
+
+# --- Step 2: Linear team creation (idempotent) ---
+
+info "=== Step 2: Linear team creation ==="
+
+if $DRY_RUN; then
+  info "[dry-run] Would check for existing Linear team with key '$TEAM_KEY'"
+  info "[dry-run] Would create team '$TEAM_NAME' (key: $TEAM_KEY) if not found"
+  TEAM_ID="dry-run-team-id"
+else
+  # Check if team already exists
+  TEAM_QUERY='query { teams(filter: { key: { eq: "'"$TEAM_KEY"'" } }) { nodes { id name key } } }'
+  TEAM_RESULT="$(linear api "$TEAM_QUERY" 2>/dev/null || true)"
+
+  if [[ -z "$TEAM_RESULT" ]]; then
+    die "Failed to query Linear API for teams. Check LINEAR_API_KEY and network connectivity."
+  fi
+
+  TEAM_COUNT="$(echo "$TEAM_RESULT" | jq -r '.data.teams.nodes | length' 2>/dev/null || echo "0")"
+
+  if [[ "$TEAM_COUNT" -gt 0 ]]; then
+    TEAM_ID="$(echo "$TEAM_RESULT" | jq -r '.data.teams.nodes[0].id')"
+    TEAM_EXISTING_NAME="$(echo "$TEAM_RESULT" | jq -r '.data.teams.nodes[0].name')"
+    ok "Linear team already exists: $TEAM_EXISTING_NAME (key: $TEAM_KEY, id: $TEAM_ID) — skipping"
+  else
+    # Create team
+    CREATE_TEAM_QUERY='mutation { teamCreate(input: { name: "'"$TEAM_NAME"'", key: "'"$TEAM_KEY"'", description: "'"$DESCRIPTION"'" }) { success team { id name key } } }'
+    CREATE_TEAM_RESULT="$(linear api "$CREATE_TEAM_QUERY" 2>/dev/null || true)"
+
+    if [[ -z "$CREATE_TEAM_RESULT" ]]; then
+      die "Failed to create Linear team. Check LINEAR_API_KEY and network connectivity."
+    fi
+
+    CREATE_SUCCESS="$(echo "$CREATE_TEAM_RESULT" | jq -r '.data.teamCreate.success' 2>/dev/null || echo "false")"
+    if [[ "$CREATE_SUCCESS" != "true" ]]; then
+      die "Linear team creation failed. Response: $CREATE_TEAM_RESULT"
+    fi
+
+    TEAM_ID="$(echo "$CREATE_TEAM_RESULT" | jq -r '.data.teamCreate.team.id')"
+    ok "Linear team created: $TEAM_NAME (key: $TEAM_KEY, id: $TEAM_ID)"
+  fi
+fi
+
+echo ""
+
+# --- Step 3: Linear project creation + team linking (idempotent) ---
+
+info "=== Step 3: Linear project creation + team linking ==="
+
+if $DRY_RUN; then
+  info "[dry-run] Would check for existing Linear project named '$PRODUCT'"
+  info "[dry-run] Would create project and link to team '$TEAM_KEY' if not found"
+  PROJECT_SLUG="dry-run-slug"
+else
+  # Check if project already exists by name
+  PROJECT_QUERY='query { projects(filter: { name: { eq: "'"$PRODUCT"'" } }) { nodes { id name slugId teams { nodes { id key } } } } }'
+  PROJECT_RESULT="$(linear api "$PROJECT_QUERY" 2>/dev/null || true)"
+
+  if [[ -z "$PROJECT_RESULT" ]]; then
+    die "Failed to query Linear API for projects. Check LINEAR_API_KEY and network connectivity."
+  fi
+
+  PROJECT_COUNT="$(echo "$PROJECT_RESULT" | jq -r '.data.projects.nodes | length' 2>/dev/null || echo "0")"
+
+  if [[ "$PROJECT_COUNT" -gt 0 ]]; then
+    PROJECT_SLUG="$(echo "$PROJECT_RESULT" | jq -r '.data.projects.nodes[0].slugId')"
+    PROJECT_ID="$(echo "$PROJECT_RESULT" | jq -r '.data.projects.nodes[0].id')"
+    ok "Linear project already exists: $PRODUCT (slug: $PROJECT_SLUG) — skipping creation"
+
+    # Check if team is already linked
+    LINKED_TEAM_COUNT="$(echo "$PROJECT_RESULT" | jq -r --arg tk "$TEAM_KEY" '[.data.projects.nodes[0].teams.nodes[] | select(.key == $tk)] | length' 2>/dev/null || echo "0")"
+    if [[ "$LINKED_TEAM_COUNT" -gt 0 ]]; then
+      ok "Team '$TEAM_KEY' already linked to project — skipping"
+    else
+      warn "Team '$TEAM_KEY' not linked to project '$PRODUCT'. Link it manually via the Linear UI."
+    fi
+  else
+    # Create project with team link
+    CREATE_PROJECT_QUERY='mutation { projectCreate(input: { name: "'"$PRODUCT"'", description: "'"$DESCRIPTION"'", teamIds: ["'"$TEAM_ID"'"] }) { success project { id name slugId } } }'
+    CREATE_PROJECT_RESULT="$(linear api "$CREATE_PROJECT_QUERY" 2>/dev/null || true)"
+
+    if [[ -z "$CREATE_PROJECT_RESULT" ]]; then
+      die "Failed to create Linear project. Check LINEAR_API_KEY and network connectivity."
+    fi
+
+    CREATE_PROJECT_SUCCESS="$(echo "$CREATE_PROJECT_RESULT" | jq -r '.data.projectCreate.success' 2>/dev/null || echo "false")"
+    if [[ "$CREATE_PROJECT_SUCCESS" != "true" ]]; then
+      die "Linear project creation failed. Response: $CREATE_PROJECT_RESULT"
+    fi
+
+    PROJECT_SLUG="$(echo "$CREATE_PROJECT_RESULT" | jq -r '.data.projectCreate.project.slugId')"
+    PROJECT_ID="$(echo "$CREATE_PROJECT_RESULT" | jq -r '.data.projectCreate.project.id')"
+    ok "Linear project created: $PRODUCT (slug: $PROJECT_SLUG, id: $PROJECT_ID)"
+    ok "Team '$TEAM_KEY' linked to project"
+  fi
+fi
+
+echo ""
+
+# --- Step 4: Port auto-allocation ---
+
+info "=== Step 4: Port auto-allocation ==="
+
+if $DRY_RUN; then
+  MAX_PORT="$(jq '[to_entries[] | .value] | max' "$PORTS_FILE" 2>/dev/null || echo "4320")"
+  PORT=$((MAX_PORT + 1))
+  info "[dry-run] Would allocate port $PORT (max existing: $MAX_PORT)"
+  info "[dry-run] Would write '$PRODUCT': $PORT to ports.json"
+else
+  # Read max port and allocate next
+  MAX_PORT="$(jq '[to_entries[] | .value] | max' "$PORTS_FILE")"
+  PORT=$((MAX_PORT + 1))
+
+  # Write new entry to ports.json
+  jq --arg p "$PRODUCT" --argjson port "$PORT" '. + {($p): $port}' "$PORTS_FILE" > "$TMPDIR_ONBOARD/ports.json"
+  cp "$TMPDIR_ONBOARD/ports.json" "$PORTS_FILE"
+  ok "Port $PORT allocated for '$PRODUCT' (written to ports.json)"
+fi
+
+echo ""
+
+# --- Step 5: run-pipeline.sh auto-registration ---
+
+info "=== Step 5: run-pipeline.sh auto-registration ==="
+
+# Derive workflow filename and default repo URL
+WORKFLOW_NAME="$(echo "$PRODUCT" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')"
+REPO_URL="https://github.com/$REPO.git"
+
+if $DRY_RUN; then
+  info "[dry-run] Would insert case entry for '$PRODUCT' in run-pipeline.sh before *) catch-all"
+  info "[dry-run]   WORKFLOW=pipeline-config/workflows/WORKFLOW-${WORKFLOW_NAME}.md"
+  info "[dry-run]   DEFAULT_REPO_URL=$REPO_URL"
+else
+  # Check if product is already registered
+  if grep -q "^  ${PRODUCT})" "$RUN_PIPELINE" 2>/dev/null; then
+    ok "Product '$PRODUCT' already registered in run-pipeline.sh — skipping"
+  else
+    # Insert new case entry before the *) catch-all
+    CASE_BLOCK="  ${PRODUCT})\\
+    WORKFLOW=\"pipeline-config/workflows/WORKFLOW-${WORKFLOW_NAME}.md\"\\
+    DEFAULT_REPO_URL=\"${REPO_URL}\"\\
+    ;;"
+    sed -i'' -e "/^  \*)$/i\\
+${CASE_BLOCK}" "$RUN_PIPELINE"
+    ok "Product '$PRODUCT' registered in run-pipeline.sh"
+  fi
+fi
+
+echo ""
+
+# --- Step 6: Generate WORKFLOW file ---
+
+info "=== Step 6: Generate WORKFLOW file ==="
+
+WORKFLOW_FILE="$WORKFLOW_DIR/WORKFLOW-${WORKFLOW_NAME}.md"
+
+if [[ -f "$WORKFLOW_FILE" ]]; then
+  ok "WORKFLOW file already exists at $WORKFLOW_FILE — skipping"
+else
+  info "Generating $WORKFLOW_FILE..."
+  if $DRY_RUN; then
+    info "[dry-run] Would copy WORKFLOW-template.md → WORKFLOW-${WORKFLOW_NAME}.md"
+    info "[dry-run] Would substitute project_slug: $PROJECT_SLUG"
+    info "[dry-run] Would substitute port: $PORT"
+  else
+    cp "$TEMPLATE_DIR/WORKFLOW-template.md" "$WORKFLOW_FILE"
+    # Substitute project_slug (only the placeholder value, not the key)
+    sed -i'' -e "s|project_slug: <YOUR_PROJECT_SLUG_HERE>|project_slug: $PROJECT_SLUG|" "$WORKFLOW_FILE"
+    # Substitute port (only the default value under server:)
+    sed -i'' -e "s|port: 4321|port: $PORT|" "$WORKFLOW_FILE"
+    ok "WORKFLOW file created at $WORKFLOW_FILE"
+  fi
+fi
+
+echo ""
+
+# --- Step 7: Verify repo exists ---
+
+info "=== Step 7: Verify repo exists ==="
+
+if ! $DRY_RUN; then
+  check_repo_exists "$REPO"
+  ok "Repository '$REPO' is accessible"
+else
+  info "[dry-run] Would verify repository '$REPO' exists"
+fi
+
+echo ""
+
+# --- Step 8: Generate CLAUDE.md in target repo ---
+
+info "=== Step 8: Generate CLAUDE.md in target repo ==="
+
+if $DRY_RUN; then
+  info "[dry-run] Would check if CLAUDE.md exists in $REPO"
+  info "[dry-run] Would generate CLAUDE.md from template with substitutions:"
+  info "[dry-run]   {{PROJECT_NAME}} → $PRODUCT"
+  info "[dry-run]   {{PORT}} → $PORT"
+  info "[dry-run]   {{REPO_URL}} → https://github.com/$REPO"
+  info "[dry-run] Would upload CLAUDE.md to $REPO via GitHub API"
+else
+  # Check if CLAUDE.md already exists in the repo
+  EXISTING_CLAUDE="$(gh api "/repos/$REPO/contents/CLAUDE.md" --jq '.sha' 2>/dev/null || echo "")"
+
+  if [[ -n "$EXISTING_CLAUDE" ]]; then
+    ok "CLAUDE.md already exists in $REPO — skipping"
+  else
+    # Generate CLAUDE.md from template
+    CLAUDE_MD_TMP="$TMPDIR_ONBOARD/CLAUDE.md"
+    sed \
+      -e "s|{{PROJECT_NAME}}|$PRODUCT|g" \
+      -e "s|{{PORT}}|$PORT|g" \
+      -e "s|{{REPO_URL}}|https://github.com/$REPO|g" \
+      "$TEMPLATE_DIR/CLAUDE.md.tmpl" > "$CLAUDE_MD_TMP"
+
+    # Upload via GitHub API (create file)
+    CONTENT_B64="$(base64 < "$CLAUDE_MD_TMP")"
+    gh api "/repos/$REPO/contents/CLAUDE.md" \
+      --method PUT \
+      --field message="Add CLAUDE.md for Symphony pipeline" \
+      --field content="$CONTENT_B64" \
+      --silent >/dev/null 2>&1
+    ok "CLAUDE.md uploaded to $REPO"
+  fi
+fi
+
+echo ""
+
+# --- Step 9: Copy CI minimal workflow to target repo ---
+
+info "=== Step 9: Copy CI minimal workflow to target repo ==="
+
+if $DRY_RUN; then
+  info "[dry-run] Would check if .github/workflows/ci.yml exists in $REPO"
+  info "[dry-run] Would upload ci-minimal.yml as .github/workflows/ci.yml to $REPO"
+else
+  EXISTING_CI="$(gh api "/repos/$REPO/contents/.github/workflows/ci.yml" --jq '.sha' 2>/dev/null || echo "")"
+
+  if [[ -n "$EXISTING_CI" ]]; then
+    ok "CI workflow already exists in $REPO — skipping"
+  else
+    CI_CONTENT_B64="$(base64 < "$TEMPLATE_DIR/ci-minimal.yml")"
+    gh api "/repos/$REPO/contents/.github/workflows/ci.yml" \
+      --method PUT \
+      --field message="Add minimal CI workflow for Symphony pipeline" \
+      --field content="$CI_CONTENT_B64" \
+      --silent >/dev/null 2>&1
+    ok "CI workflow uploaded to $REPO"
+  fi
+fi
+
+echo ""
+
+# --- Step 10: Set up GitHub merge queue via Rulesets API ---
+
+info "=== Step 10: Set up GitHub merge queue via Rulesets API ==="
+
+if $DRY_RUN; then
+  info "[dry-run] Would check existing rulesets for $REPO"
+  info "[dry-run] Would create merge queue ruleset if not present"
+else
+  # Check if a merge queue ruleset already exists
+  EXISTING_RULESETS="$(gh api "/repos/$REPO/rulesets" 2>/dev/null || echo "[]")"
+  HAS_MERGE_QUEUE="$(echo "$EXISTING_RULESETS" | jq '[.[] | select(.name == "symphony-merge-queue")] | length' 2>/dev/null || echo "0")"
+
+  if [[ "$HAS_MERGE_QUEUE" -gt 0 ]]; then
+    ok "Merge queue ruleset already exists in $REPO — skipping"
+  else
+    # Create ruleset JSON in temp file
+    RULESET_JSON="$TMPDIR_ONBOARD/ruleset.json"
+    cat > "$RULESET_JSON" <<'RULESET_EOF'
+{
+  "name": "symphony-merge-queue",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/main"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "merge_queue",
+      "parameters": {
+        "check_response_timeout_minutes": 60,
+        "grouping_strategy": "ALLGREEN",
+        "max_entries_to_build": 5,
+        "max_entries_to_merge": 5,
+        "merge_method": "SQUASH",
+        "min_entries_to_merge": 1,
+        "min_entries_to_merge_wait_minutes": 5
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "required_status_checks": [
+          {
+            "context": "test"
+          }
+        ],
+        "strict_required_status_checks_policy": false
+      }
+    }
+  ],
+  "bypass_actors": []
+}
+RULESET_EOF
+
+    gh api "/repos/$REPO/rulesets" \
+      --method POST \
+      --input "$RULESET_JSON" \
+      --silent >/dev/null 2>&1
+    ok "Merge queue ruleset created in $REPO"
+  fi
+fi
+
+echo ""
+
+# --- Step 11: Summary ---
+
+info "=== Step 11: Summary ==="
+info "  product:      $PRODUCT"
+info "  team:         $TEAM_NAME (key: $TEAM_KEY)"
+info "  project-slug: $PROJECT_SLUG"
+info "  port:         $PORT"
+info "  repo:         $REPO"
+info "  WORKFLOW:     $WORKFLOW_FILE"
+info "  CLAUDE.md:    $REPO/CLAUDE.md"
+info "  CI workflow:  $REPO/.github/workflows/ci.yml"
+info "  Merge queue:  $REPO (symphony-merge-queue ruleset)"
+info "  run-pipeline: $RUN_PIPELINE (case entry for $PRODUCT)"
+
+if $DRY_RUN; then
+  echo ""
+  info "Dry run complete — no changes were made."
+fi
+
+ok "Onboarding complete for $PRODUCT"

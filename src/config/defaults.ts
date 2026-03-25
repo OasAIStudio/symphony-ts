@@ -19,9 +19,12 @@ export const DEFAULT_HOOK_TIMEOUT_MS = 60_000;
 export const DEFAULT_MAX_CONCURRENT_AGENTS = 10;
 export const DEFAULT_MAX_TURNS = 20;
 export const DEFAULT_MAX_RETRY_BACKOFF_MS = 300_000;
+export const DEFAULT_MAX_RETRY_ATTEMPTS = 5;
 export const DEFAULT_MAX_CONCURRENT_AGENTS_BY_STATE = Object.freeze(
   {},
 ) as Readonly<Record<string, number>>;
+
+export const DEFAULT_RUNNER_KIND = "codex";
 
 export const DEFAULT_CODEX_COMMAND = "codex app-server";
 export const DEFAULT_TURN_TIMEOUT_MS = 3_600_000;
@@ -58,7 +61,11 @@ export const SPEC_DEFAULTS = Object.freeze({
     maxConcurrentAgents: DEFAULT_MAX_CONCURRENT_AGENTS,
     maxTurns: DEFAULT_MAX_TURNS,
     maxRetryBackoffMs: DEFAULT_MAX_RETRY_BACKOFF_MS,
+    maxRetryAttempts: DEFAULT_MAX_RETRY_ATTEMPTS,
     maxConcurrentAgentsByState: DEFAULT_MAX_CONCURRENT_AGENTS_BY_STATE,
+  },
+  runner: {
+    kind: DEFAULT_RUNNER_KIND,
   },
   codex: {
     command: DEFAULT_CODEX_COMMAND,

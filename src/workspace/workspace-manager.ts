@@ -24,6 +24,68 @@ export interface WorkspaceManagerOptions {
   hooks?: WorkspaceHookRunner | null;
 }
 
+/**
+ * A simple async mutual-exclusion lock.
+ *
+ * Callers acquire the lock with `acquire()`, which returns a `release`
+ * function. The next waiter is unblocked only after `release()` is called.
+ * `depth` reflects the total number of callers currently holding or queued
+ * for the lock, which can be inspected *before* calling `acquire()` to
+ * determine whether the caller will have to wait.
+ */
+export class AsyncMutex {
+  #queue: Promise<void> = Promise.resolve();
+  #depth = 0;
+
+  /** Total number of callers holding or waiting for the lock. */
+  get depth(): number {
+    return this.#depth;
+  }
+
+  /**
+   * Acquire the lock. Resolves with a `release` function that must be called
+   * to hand the lock to the next waiter.
+   */
+  acquire(): Promise<() => void> {
+    this.#depth++;
+
+    let unlock!: () => void;
+    const prev = this.#queue;
+    this.#queue = this.#queue.then(
+      () =>
+        new Promise<void>((resolve) => {
+          unlock = resolve;
+        }),
+    );
+
+    return prev.then(() => {
+      const release = () => {
+        this.#depth--;
+        unlock();
+      };
+      return release;
+    });
+  }
+}
+
+/**
+ * Module-level registry of per-root creation mutexes.
+ *
+ * Keyed by `workspaceRoot` (the normalised bare-clone path) so that
+ * concurrent creations for the same repo are serialised while creations
+ * for different repos can proceed independently.
+ */
+const creationMutexes = new Map<string, AsyncMutex>();
+
+function getCreationMutex(workspaceRoot: string): AsyncMutex {
+  let mutex = creationMutexes.get(workspaceRoot);
+  if (!mutex) {
+    mutex = new AsyncMutex();
+    creationMutexes.set(workspaceRoot, mutex);
+  }
+  return mutex;
+}
+
 export class WorkspaceManager {
   readonly root: string;
   readonly #fs: FileSystemLike;
@@ -53,10 +115,28 @@ export class WorkspaceManager {
       };
 
       if (createdNow) {
-        await this.#hooks?.run({
-          name: "afterCreate",
-          workspacePath,
-        });
+        const mutex = getCreationMutex(workspaceRoot);
+        const queueDepth = mutex.depth;
+
+        if (queueDepth > 0) {
+          console.log(
+            `[workspace] afterCreate for ${workspacePath} is queued (depth: ${queueDepth})`,
+          );
+        } else {
+          console.log(
+            `[workspace] afterCreate for ${workspacePath} is executing`,
+          );
+        }
+
+        const release = await mutex.acquire();
+        try {
+          await this.#hooks?.run({
+            name: "afterCreate",
+            workspacePath,
+          });
+        } finally {
+          release();
+        }
       }
 
       return workspace;

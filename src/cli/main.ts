@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { realpathSync } from "node:fs";
+import { realpathSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -8,10 +8,16 @@ import { resolveWorkflowConfig } from "../config/config-resolver.js";
 import { WORKFLOW_FILENAME } from "../config/defaults.js";
 import { loadWorkflowDefinition } from "../config/workflow-loader.js";
 import { ERROR_CODES } from "../errors/codes.js";
+import { formatEasternTimestamp } from "../logging/format-timestamp.js";
+import {
+  PipelineNotifier,
+  createSlackPoster,
+} from "../orchestrator/pipeline-notifier.js";
 import {
   type RuntimeServiceHandle,
   startRuntimeService,
 } from "../orchestrator/runtime-host.js";
+import { getDisplayVersion } from "../version.js";
 
 export const CLI_ACKNOWLEDGEMENT_FLAG = "--acknowledge-high-trust-preview";
 
@@ -21,6 +27,7 @@ export interface CliOptions {
   port: number | null;
   acknowledged: boolean;
   help: boolean;
+  version: boolean;
 }
 
 export interface CliRuntimeSettings {
@@ -36,6 +43,7 @@ export interface CliHost {
 export interface StartCliHostInput {
   options: CliOptions;
   runtime: CliRuntimeSettings;
+  env: NodeJS.ProcessEnv;
 }
 
 export interface CliIo {
@@ -67,6 +75,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   let port: number | null = null;
   let acknowledged = false;
   let help = false;
+  let version = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -87,6 +96,11 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
 
     if (token === "--help" || token === "-h") {
       help = true;
+      continue;
+    }
+
+    if (token === "--version" || token === "-V") {
+      version = true;
       continue;
     }
 
@@ -125,6 +139,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
     port,
     acknowledged,
     help,
+    version,
   };
 }
 
@@ -148,9 +163,20 @@ export function applyCliOverrides(
 export async function startCliHost(
   input: StartCliHostInput,
 ): Promise<RuntimeServiceHandle> {
+  const slackChannel = input.runtime.config.server.slackNotifyChannel;
+  const slackToken = input.env.SLACK_BOT_TOKEN;
+  const notifier =
+    slackChannel !== null && slackToken !== undefined
+      ? new PipelineNotifier({
+          channel: slackChannel,
+          poster: createSlackPoster({ botToken: slackToken }),
+        })
+      : null;
+
   return startRuntimeService({
     config: input.runtime.config,
     logsRoot: input.runtime.logsRoot,
+    notifier,
   });
 }
 
@@ -178,6 +204,11 @@ export async function runCli(
     return 1;
   }
 
+  if (options.version) {
+    io.stdout(`symphony-ts ${getDisplayVersion()}\n`);
+    return 0;
+  }
+
   if (options.help) {
     io.stdout(renderUsage());
     return 0;
@@ -201,6 +232,7 @@ export async function runCli(
     const host = await startHost({
       options,
       runtime,
+      env,
     });
     const exitCode = await host.waitForExit();
 
@@ -214,6 +246,51 @@ export async function runCli(
     io.stderr(`${formatCliError(error)}\n`);
     return 1;
   }
+}
+
+function safeErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  try {
+    return String(error);
+  } catch {
+    return "[non-stringifiable value]";
+  }
+}
+
+export function handleUncaughtException(error: unknown): void {
+  const entry = {
+    timestamp: formatEasternTimestamp(new Date()),
+    level: "error",
+    event: "process_crash",
+    message: safeErrorMessage(error),
+    error_code: "uncaught_exception",
+    stack: error instanceof Error ? error.stack : undefined,
+  };
+  process.exitCode = 70;
+  try {
+    writeSync(2, `${JSON.stringify(entry)}\n`);
+  } catch {
+    // Ignore write errors during crash — exiting is the priority.
+  }
+  process.exit(70);
+}
+
+export function handleUnhandledRejection(reason: unknown): void {
+  const entry = {
+    timestamp: formatEasternTimestamp(new Date()),
+    level: "error",
+    event: "process_crash",
+    message: safeErrorMessage(reason),
+    error_code: "unhandled_rejection",
+    stack: reason instanceof Error ? reason.stack : undefined,
+  };
+  process.exitCode = 70;
+  try {
+    writeSync(2, `${JSON.stringify(entry)}\n`);
+  } catch {
+    // Ignore write errors during crash — exiting is the priority.
+  }
+  process.exit(70);
 }
 
 export async function main(): Promise<void> {
@@ -287,5 +364,7 @@ function renderUsage(): string {
 }
 
 if (shouldRunAsCli(import.meta.url, process.argv[1])) {
-  void main();
+  process.on("uncaughtException", handleUncaughtException);
+  process.on("unhandledRejection", handleUnhandledRejection);
+  void main().catch(handleUnhandledRejection);
 }

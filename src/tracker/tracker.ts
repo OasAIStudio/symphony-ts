@@ -10,4 +10,9 @@ export interface IssueTracker {
   fetchCandidateIssues(): Promise<Issue[]>;
   fetchIssuesByStates(stateNames: string[]): Promise<Issue[]>;
   fetchIssueStatesByIds(issueIds: string[]): Promise<IssueStateSnapshot[]>;
+  fetchIssuesByLabels?(labelNames: string[]): Promise<Issue[]>;
+  fetchOpenIssuesByLabels?(
+    labelNames: string[],
+    excludeStateNames: string[],
+  ): Promise<Issue[]>;
 }

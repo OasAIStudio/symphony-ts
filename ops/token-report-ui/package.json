@@ -1,0 +1,33 @@
+{
+  "name": "token-report-ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "tsc && vp build",
+    "test": "vp test",
+    "check": "vp check",
+    "preview": "vp preview"
+  },
+  "dependencies": {
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "~5.9.3",
+    "vite": "npm:@voidzero-dev/vite-plus-core@latest",
+    "vite-plugin-singlefile": "^2.3.2",
+    "vite-plus": "latest"
+  },
+  "packageManager": "pnpm@10.30.2",
+  "pnpm": {
+    "overrides": {
+      "vite": "npm:@voidzero-dev/vite-plus-core@latest",
+      "vitest": "npm:@voidzero-dev/vite-plus-test@latest"
+    }
+  }
+}

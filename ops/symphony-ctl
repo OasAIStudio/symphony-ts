@@ -1,0 +1,1104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# symphony-ctl — manage symphony-ts as a macOS launchd service
+# Usage: symphony-ctl {install|uninstall|start|stop|restart|status|logs|tail|cleanup}
+
+SCRIPT_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
+SYMPHONY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Defaults — override via environment or .env
+SYMPHONY_PROJECT="${SYMPHONY_PROJECT:-symphony}"
+SERVICE_LABEL="com.symphony.${SYMPHONY_PROJECT}"
+PLIST_PATH="$HOME/Library/LaunchAgents/${SERVICE_LABEL}.plist"
+LOG_DIR="$HOME/Library/Logs/symphony/${SYMPHONY_PROJECT}"
+ENV_FILE="${SYMPHONY_ENV_FILE:-$SYMPHONY_ROOT/.env}"
+WORKFLOW_PATH="${SYMPHONY_WORKFLOW:-$SYMPHONY_ROOT/pipeline-config/workflows/WORKFLOW-${SYMPHONY_PROJECT}.md}"
+NODE_BIN="${SYMPHONY_NODE:-$(which node 2>/dev/null || echo /opt/homebrew/bin/node)}"
+CLI_JS="$SYMPHONY_ROOT/dist/src/cli/main.js"
+
+# Colors (disabled if not a terminal)
+if [[ -t 1 ]]; then
+  RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; CYAN='\033[0;36m'; NC='\033[0m'
+else
+  RED=''; GREEN=''; YELLOW=''; CYAN=''; NC=''
+fi
+
+info()  { echo -e "${CYAN}▸${NC} $*"; }
+ok()    { echo -e "${GREEN}✓${NC} $*"; }
+warn()  { echo -e "${YELLOW}⚠${NC} $*" >&2; }
+die()   { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
+
+# --- Precondition checks ---
+
+check_node() {
+  [[ -x "$NODE_BIN" ]] || die "Node not found at $NODE_BIN. Set SYMPHONY_NODE or install Node >= 22."
+}
+
+check_built() {
+  [[ -f "$CLI_JS" ]] || die "Built CLI not found at $CLI_JS. Run 'pnpm build' in $SYMPHONY_ROOT first."
+}
+
+check_env_file() {
+  [[ -f "$ENV_FILE" ]] || die ".env file not found at $ENV_FILE. Set SYMPHONY_ENV_FILE to override."
+}
+
+check_workflow() {
+  [[ -f "$WORKFLOW_PATH" ]] || die "WORKFLOW.md not found at $WORKFLOW_PATH. Set SYMPHONY_WORKFLOW to override."
+}
+
+check_not_installed() {
+  [[ ! -f "$PLIST_PATH" ]] || die "Service already installed at $PLIST_PATH. Run 'uninstall' first."
+}
+
+check_installed() {
+  [[ -f "$PLIST_PATH" ]] || die "Service not installed. Run 'install' first."
+}
+
+# --- .env → plist EnvironmentVariables ---
+
+generate_env_dict() {
+  local env_dict=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Skip comments and blank lines
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    # Trim leading/trailing whitespace (bash-native, preserves quotes)
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+
+    local key="${line%%=*}"
+    local value="${line#*=}"
+    # Remove surrounding quotes from value
+    value="${value#\"}" ; value="${value%\"}"
+    value="${value#\'}" ; value="${value%\'}"
+    # Strip inline comments (only unquoted: space then #)
+    # Only strip if value was not quoted (quotes already removed above)
+    value="${value%% \#*}"
+
+    env_dict+="      <key>${key}</key>"$'\n'
+    env_dict+="      <string>${value}</string>"$'\n'
+  done < "$ENV_FILE"
+  echo "$env_dict"
+}
+
+# --- plist generation ---
+
+generate_plist() {
+  local env_dict
+  env_dict="$(generate_env_dict)"
+
+  cat <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${SERVICE_LABEL}</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>${NODE_BIN}</string>
+        <string>${CLI_JS}</string>
+        <string>${WORKFLOW_PATH}</string>
+        <string>--acknowledge-high-trust-preview</string>
+        <string>--logs-root</string>
+        <string>${LOG_DIR}</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>${SYMPHONY_ROOT}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PATH</key>
+      <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+      <key>HOME</key>
+      <string>${HOME}</string>
+      <key>NODE_ENV</key>
+      <string>production</string>
+${env_dict}    </dict>
+
+    <key>StandardOutPath</key>
+    <string>${LOG_DIR}/stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>${LOG_DIR}/stderr.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
+PLIST
+}
+
+# --- Commands ---
+
+cmd_install() {
+  check_node
+  check_built
+  check_env_file
+  check_workflow
+  check_not_installed
+
+  mkdir -p "$LOG_DIR"
+  mkdir -p "$(dirname "$PLIST_PATH")"
+
+  generate_plist > "$PLIST_PATH"
+  ok "Plist written to $PLIST_PATH"
+
+  launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH"
+  ok "Service registered: $SERVICE_LABEL"
+  info "Run 'symphony-ctl start' to begin polling."
+}
+
+cmd_uninstall() {
+  check_installed
+
+  # Stop first if running
+  if launchctl print "gui/$(id -u)/${SERVICE_LABEL}" &>/dev/null; then
+    launchctl kill SIGTERM "gui/$(id -u)/${SERVICE_LABEL}" 2>/dev/null || true
+    sleep 1
+  fi
+
+  launchctl bootout "gui/$(id -u)/${SERVICE_LABEL}" 2>/dev/null || true
+  rm -f "$PLIST_PATH"
+  ok "Service uninstalled: $SERVICE_LABEL"
+}
+
+cmd_start() {
+  check_installed
+
+  if is_running; then
+    warn "Service is already running."
+    return 0
+  fi
+
+  launchctl kickstart "gui/$(id -u)/${SERVICE_LABEL}"
+  ok "Service started: $SERVICE_LABEL"
+  info "Dashboard: http://localhost:$(get_port)"
+  info "Logs: $LOG_DIR/"
+}
+
+cmd_stop() {
+  check_installed
+
+  if ! is_running; then
+    warn "Service is not running."
+    return 0
+  fi
+
+  launchctl kill SIGTERM "gui/$(id -u)/${SERVICE_LABEL}"
+  ok "Service stopped: $SERVICE_LABEL"
+}
+
+cmd_restart() {
+  check_installed
+
+  if is_running; then
+    cmd_stop
+    sleep 1
+  fi
+  cmd_start
+}
+
+cmd_status() {
+  if [[ ! -f "$PLIST_PATH" ]]; then
+    info "Service not installed."
+    return 0
+  fi
+
+  echo ""
+  info "Service:   $SERVICE_LABEL"
+  info "Plist:     $PLIST_PATH"
+  info "Workflow:  $WORKFLOW_PATH"
+  info "Logs:      $LOG_DIR/"
+  info "Dashboard: http://localhost:$(get_port)"
+  echo ""
+
+  if is_running; then
+    local pid
+    pid="$(get_pid)"
+    ok "Running (PID ${pid:-unknown})"
+  else
+    warn "Not running"
+  fi
+
+  # Show last few lines of stderr if available
+  if [[ -f "$LOG_DIR/stderr.log" ]]; then
+    local size
+    size="$(wc -c < "$LOG_DIR/stderr.log" | tr -d ' ')"
+    if [[ "$size" -gt 0 ]]; then
+      echo ""
+      info "Last 5 lines of stderr.log:"
+      tail -5 "$LOG_DIR/stderr.log" | sed 's/^/  /'
+    fi
+  fi
+}
+
+cmd_logs() {
+  if [[ ! -d "$LOG_DIR" ]]; then
+    die "Log directory not found: $LOG_DIR"
+  fi
+
+  local log_file="${1:-stderr}"
+  local log_path="$LOG_DIR/${log_file}.log"
+
+  [[ -f "$log_path" ]] || die "Log file not found: $log_path"
+  less +G "$log_path"
+}
+
+cmd_tail() {
+  if [[ ! -d "$LOG_DIR" ]]; then
+    die "Log directory not found: $LOG_DIR"
+  fi
+
+  info "Tailing stderr.log (Ctrl-C to stop)..."
+  tail -f "$LOG_DIR/stderr.log" "$LOG_DIR/stdout.log" 2>/dev/null
+}
+
+# --- Helpers ---
+
+is_running() {
+  launchctl print "gui/$(id -u)/${SERVICE_LABEL}" &>/dev/null && \
+    launchctl print "gui/$(id -u)/${SERVICE_LABEL}" 2>/dev/null | grep -q 'pid = [0-9]'
+}
+
+get_pid() {
+  launchctl print "gui/$(id -u)/${SERVICE_LABEL}" 2>/dev/null | grep -oE 'pid = [0-9]+' | grep -oE '[0-9]+'
+}
+
+get_port() {
+  # Extract port from WORKFLOW frontmatter
+  if [[ -f "$WORKFLOW_PATH" ]]; then
+    local port
+    port="$(sed -n '/^---$/,/^---$/p' "$WORKFLOW_PATH" | grep -E '^\s*port:' | head -1 | awk '{print $2}')"
+    echo "${port:-4321}"
+  else
+    echo "4321"
+  fi
+}
+
+# --- Log rotation ---
+
+cmd_install_logrotate() {
+  local conf_src="$SCRIPT_DIR/com.symphony.newsyslog.conf"
+  local conf_dest="/etc/newsyslog.d/com.symphony.newsyslog.conf"
+
+  [[ -f "$conf_src" ]] || die "newsyslog config not found at $conf_src"
+
+  info "Installing log rotation config to $conf_dest"
+  sudo cp "$conf_src" "$conf_dest"
+  ok "Log rotation installed. Logs rotate at 10MB, keep 5 archives."
+  info "newsyslog checks this automatically — no restart needed."
+}
+
+# --- Cleanup ---
+
+cmd_cleanup() {
+  local execute=false
+  local skip_github=false
+  local skip_linear=false
+  local prune_branches=false
+
+  # Parse flags
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --execute)          execute=true ;;
+      --skip-github)      skip_github=true ;;
+      --skip-linear)      skip_linear=true ;;
+      --prune-branches)   prune_branches=true ;;
+      *)                  die "Unknown flag: $1" ;;
+    esac
+    shift
+  done
+
+  # Load env if not already set
+  if [[ -f "$ENV_FILE" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+      line="${line#"${line%%[![:space:]]*}"}"
+      line="${line%"${line##*[![:space:]]}"}"
+      [[ -z "$line" ]] && continue
+      local key="${line%%=*}"
+      local value="${line#*=}"
+      value="${value#\"}" ; value="${value%\"}"
+      value="${value#\'}" ; value="${value%\'}"
+      value="${value%% \#*}"
+      # Only export if not already set
+      if [[ -z "${!key:-}" ]]; then
+        export "$key=$value"
+      fi
+    done < "$ENV_FILE"
+  fi
+
+  check_workflow
+
+  # Parse WORKFLOW frontmatter for project_slug and workspace root
+  local frontmatter
+  frontmatter="$(sed -n '/^---$/,/^---$/p' "$WORKFLOW_PATH")"
+
+  local project_slug
+  project_slug="$(echo "$frontmatter" | grep -E '^\s*project_slug:' | head -1 | awk '{print $2}')"
+  [[ -n "$project_slug" ]] || die "Could not parse project_slug from $WORKFLOW_PATH frontmatter"
+
+  local workspace_root_raw
+  workspace_root_raw="$(echo "$frontmatter" | grep -E '^\s*root:' | head -1 | awk '{print $2}')"
+  [[ -n "$workspace_root_raw" ]] || die "Could not parse workspace.root from $WORKFLOW_PATH frontmatter"
+
+  # Resolve workspace root relative to WORKFLOW_PATH directory
+  local workflow_dir
+  workflow_dir="$(cd "$(dirname "$WORKFLOW_PATH")" && pwd)"
+  local workspace_root
+  if [[ "$workspace_root_raw" == /* ]]; then
+    workspace_root="$workspace_root_raw"
+  else
+    workspace_root="$workflow_dir/$workspace_root_raw"
+  fi
+
+  # Extract GitHub owner/repo from REPO_URL
+  local github_repo=""
+  if [[ -n "${REPO_URL:-}" ]]; then
+    github_repo="$(echo "$REPO_URL" | sed -E 's|^https?://github\.com/||; s|\.git$||')"
+  fi
+
+  local dashboard_port
+  dashboard_port="$(get_port)"
+
+  if $execute; then
+    info "symphony-ctl cleanup [EXECUTING]"
+  else
+    info "symphony-ctl cleanup [DRY RUN]"
+  fi
+  echo ""
+
+  local count_workspaces=0
+  local count_prs=0
+  local count_logs=0
+  local count_stale_issues=0
+
+  # --- 1. Local workspaces ---
+  info "Local workspaces:"
+  if [[ -d "$workspace_root" ]]; then
+    local has_workspaces=false
+    for dir in "$workspace_root"/*/; do
+      [[ -d "$dir" ]] || continue
+      local uuid
+      uuid="$(basename "$dir")"
+      # Only process UUID-shaped directories
+      [[ "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || continue
+      has_workspaces=true
+
+      if $skip_linear || [[ -z "${LINEAR_API_KEY:-}" ]]; then
+        warn "  $uuid — skipped (Linear not available)"
+        continue
+      fi
+
+      # Query Linear for the issue state
+      local response
+      response="$(curl -s -X POST https://api.linear.app/graphql \
+        -H "Content-Type: application/json" \
+        -H "Authorization: $LINEAR_API_KEY" \
+        -d "{\"query\":\"{ issue(id: \\\"$uuid\\\") { identifier title state { name type } } }\"}" 2>/dev/null)" || true
+
+      local issue_id issue_state state_type
+      issue_id="$(echo "$response" | grep -o '"identifier":"[^"]*"' | head -1 | cut -d'"' -f4)"
+      issue_state="$(echo "$response" | grep -o '"name":"[^"]*"' | head -1 | cut -d'"' -f4)"
+      state_type="$(echo "$response" | grep -o '"type":"[^"]*"' | head -1 | cut -d'"' -f4)"
+
+      if [[ -z "$issue_id" ]]; then
+        # Issue not found in Linear
+        if $execute; then
+          rm -rf "$dir"
+          ok "  $uuid (issue not found) — removed"
+        else
+          ok "  $uuid (issue not found) — would remove"
+        fi
+        count_workspaces=$((count_workspaces + 1))
+      elif [[ "$state_type" == "completed" || "$state_type" == "canceled" || "$state_type" == "cancelled" ]]; then
+        if $execute; then
+          rm -rf "$dir"
+          ok "  $uuid ($issue_id, $issue_state) — removed"
+        else
+          ok "  $uuid ($issue_id, $issue_state) — would remove"
+        fi
+        count_workspaces=$((count_workspaces + 1))
+      else
+        info "  $uuid ($issue_id, $issue_state) — active, keeping"
+      fi
+    done
+    if ! $has_workspaces; then
+      info "  (none found)"
+    fi
+  else
+    info "  (workspace root not found: $workspace_root)"
+  fi
+  echo ""
+
+  # --- 2. Orphaned PRs ---
+  info "Orphaned PRs:"
+  if $skip_github; then
+    warn "  skipped (--skip-github)"
+  elif [[ -z "$github_repo" ]]; then
+    warn "  skipped (REPO_URL not set)"
+  elif ! command -v gh &>/dev/null; then
+    warn "  skipped (gh CLI not found)"
+  else
+    local pr_json
+    pr_json="$(gh pr list --repo "$github_repo" --state open --json number,title,headRefName 2>/dev/null)" || {
+      warn "  skipped (gh pr list failed)"
+      pr_json="[]"
+    }
+
+    # Use gh's --jq to extract tab-delimited fields (avoids fragile JSON parsing)
+    local pr_lines
+    pr_lines="$(gh pr list --repo "$github_repo" --state open \
+      --json number,title,headRefName \
+      --jq '.[] | [.number, .headRefName, .title] | @tsv' 2>/dev/null)" || {
+      warn "  skipped (gh pr list failed)"
+      pr_lines=""
+    }
+
+    if [[ -z "$pr_lines" ]]; then
+      info "  (no open PRs)"
+    else
+      while IFS=$'\t' read -r pr_number pr_branch pr_title; do
+        [[ -n "$pr_number" ]] || continue
+
+        # Check if branch matches pipeline pattern (eric/mob-*)
+        if [[ "$pr_branch" =~ ^eric/mob- ]]; then
+          # Extract MOB identifier from title or branch
+          local mob_id
+          mob_id="$(echo "$pr_title" | grep -oE 'MOB-[0-9]+' | head -1)"
+          [[ -n "$mob_id" ]] || mob_id="$(echo "$pr_branch" | grep -oE 'mob-[0-9]+' | head -1 | tr '[:lower:]' '[:upper:]')"
+
+          local should_close=false
+          local reason=""
+
+          if ! $skip_linear && [[ -n "${LINEAR_API_KEY:-}" ]] && [[ -n "$mob_id" ]]; then
+            # Parse team key and number from identifier (e.g., MOB-16 → team=MOB, number=16)
+            local team_key issue_number
+            team_key="$(echo "$mob_id" | cut -d'-' -f1)"
+            issue_number="$(echo "$mob_id" | cut -d'-' -f2)"
+
+            local pr_response
+            pr_response="$(curl -s -X POST https://api.linear.app/graphql \
+              -H "Content-Type: application/json" \
+              -H "Authorization: $LINEAR_API_KEY" \
+              -d "{\"query\":\"{ issues(filter: { number: { eq: $issue_number }, team: { key: { eq: \\\"$team_key\\\" } } }) { nodes { identifier state { name type } } } }\"}" 2>/dev/null)" || true
+
+            local pr_state_type
+            pr_state_type="$(echo "$pr_response" | grep -o '"type":"[^"]*"' | head -1 | cut -d'"' -f4)"
+
+            if [[ "$pr_state_type" == "completed" || "$pr_state_type" == "canceled" || "$pr_state_type" == "cancelled" ]]; then
+              should_close=true
+              local pr_issue_state
+              pr_issue_state="$(echo "$pr_response" | grep -o '"name":"[^"]*"' | head -1 | cut -d'"' -f4)"
+              reason="$mob_id is $pr_issue_state"
+            fi
+          fi
+
+          if $should_close; then
+            if $execute; then
+              gh pr close "$pr_number" --repo "$github_repo" --delete-branch 2>/dev/null && \
+                ok "  PR #$pr_number ($reason) — closed + branch deleted" || \
+                warn "  PR #$pr_number ($reason) — failed to close"
+            else
+              ok "  PR #$pr_number ($reason) — would close + delete branch"
+            fi
+            count_prs=$((count_prs + 1))
+          else
+            info "  PR #$pr_number ($pr_branch) — issue still active, keeping"
+          fi
+        fi
+      done <<< "$pr_lines"
+    fi
+  fi
+  echo ""
+
+  # --- 3. Stale "In Progress" issues ---
+  info "Stale issues:"
+  if $skip_linear || [[ -z "${LINEAR_API_KEY:-}" ]]; then
+    warn "  skipped (Linear not available)"
+  else
+    local ip_response
+    ip_response="$(curl -s -X POST https://api.linear.app/graphql \
+      -H "Content-Type: application/json" \
+      -H "Authorization: $LINEAR_API_KEY" \
+      -d "{\"query\":\"{ issues(filter: { project: { slugId: { eq: \\\"$project_slug\\\" } }, state: { name: { eq: \\\"In Progress\\\" } } }) { nodes { id identifier title state { name } } } }\"}" 2>/dev/null)" || true
+
+    # Try to get dashboard state for cross-reference
+    local dashboard_state=""
+    local dashboard_available=false
+    dashboard_state="$(curl -s --connect-timeout 2 "http://localhost:$dashboard_port/api/v1/state" 2>/dev/null)" || true
+    if [[ -n "$dashboard_state" ]] && echo "$dashboard_state" | grep -q '"agents"' 2>/dev/null; then
+      dashboard_available=true
+    fi
+
+    # Parse In Progress issues
+    local ip_issues
+    ip_issues="$(echo "$ip_response" | grep -o '"identifier":"[^"]*"' | cut -d'"' -f4 || true)"
+
+    if [[ -z "$ip_issues" ]]; then
+      info "  (no In Progress issues)"
+    else
+      local idx=0
+      while IFS= read -r ident; do
+        local ip_title
+        # Extract corresponding title (nth occurrence)
+        ip_title="$(echo "$ip_response" | grep -o '"title":"[^"]*"' | sed -n "$((idx + 1))p" | cut -d'"' -f4)"
+        idx=$((idx + 1))
+
+        local has_worker=false
+        if $dashboard_available; then
+          # Check if issue identifier appears in dashboard state
+          if echo "$dashboard_state" | grep -q "$ident" 2>/dev/null; then
+            has_worker=true
+          fi
+        fi
+
+        if $has_worker; then
+          info "  $ident \"$ip_title\" — In Progress, worker active"
+        elif $dashboard_available; then
+          warn "  $ident \"$ip_title\" — In Progress, no active worker"
+          count_stale_issues=$((count_stale_issues + 1))
+        else
+          warn "  $ident \"$ip_title\" — In Progress (dashboard unreachable, cannot verify worker)"
+          count_stale_issues=$((count_stale_issues + 1))
+        fi
+      done <<< "$ip_issues"
+    fi
+  fi
+  echo ""
+
+  # --- 4. Log files ---
+  info "Log files:"
+  local has_logs=false
+  while IFS= read -r logfile; do
+    [[ -f "$logfile" ]] || continue
+    has_logs=true
+
+    # Check age — find files older than 7 days
+    if [[ "$(uname)" == "Darwin" ]]; then
+      local file_age_days
+      local file_mod
+      file_mod="$(stat -f %m "$logfile")"
+      local now
+      now="$(date +%s)"
+      file_age_days=$(( (now - file_mod) / 86400 ))
+    else
+      local file_age_days=0
+      if find "$logfile" -mtime +7 -print | grep -q .; then
+        file_age_days=8
+      fi
+    fi
+
+    if [[ "$file_age_days" -ge 7 ]]; then
+      if $execute; then
+        rm -f "$logfile"
+        ok "  $logfile (${file_age_days}d old) — removed"
+      else
+        ok "  $logfile (${file_age_days}d old) — would remove"
+      fi
+      count_logs=$((count_logs + 1))
+    else
+      info "  $logfile (${file_age_days}d old) — recent, keeping"
+    fi
+  done < <(find "$LOG_DIR" -name "*.log" -o -name "*.jsonl" 2>/dev/null)
+  if ! $has_logs; then
+    info "  (none found)"
+  fi
+  echo ""
+
+  # --- Prune branches (optional phase) ---
+  local count_branches=0
+  if $prune_branches; then
+    info "=== Prune Branches ==="
+    _do_prune_branches "$execute"
+    count_branches="$_PRUNE_BRANCHES_COUNT"
+  fi
+
+  # --- Summary ---
+  info "Summary: $count_workspaces workspaces, $count_prs PRs, $count_stale_issues stale issues, $count_logs logs, $count_branches branches"
+  if ! $execute; then
+    info "Run with --execute to apply."
+  fi
+}
+
+# --- Prune Branches ---
+
+# Shared implementation: fetch --prune, list merged branches, optionally delete.
+# Sets global _PRUNE_BRANCHES_COUNT to the number of branches acted on.
+# Arguments: execute (true|false)
+_do_prune_branches() {
+  local execute="${1:-false}"
+  _PRUNE_BRANCHES_COUNT=0
+
+  # Step 1: fetch --prune to clean stale remote-tracking refs
+  info "Fetching and pruning stale remote-tracking refs..."
+  git -C "$SYMPHONY_ROOT" fetch --prune
+  echo ""
+
+  # Step 2: resolve the currently checked-out branch so we can skip it
+  local current_branch
+  current_branch="$(git -C "$SYMPHONY_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+
+  # Step 3: list local branches fully merged into main
+  info "Local branches merged into main (skipping main, master, current):"
+  local found=false
+  while IFS= read -r raw_branch; do
+    # Strip leading whitespace and the "* " current-branch marker
+    local branch
+    branch="$(echo "$raw_branch" | xargs)"
+    branch="${branch#\* }"
+    [[ -z "$branch" ]] && continue
+    [[ "$branch" == "main" || "$branch" == "master" || "$branch" == "$current_branch" ]] && continue
+    found=true
+    if $execute; then
+      git -C "$SYMPHONY_ROOT" branch -d "$branch"
+      ok "  $branch — deleted"
+    else
+      info "  $branch — would delete"
+    fi
+    _PRUNE_BRANCHES_COUNT=$((_PRUNE_BRANCHES_COUNT + 1))
+  done < <(git -C "$SYMPHONY_ROOT" branch --merged main 2>/dev/null)
+
+  if ! $found; then
+    info "  (none found)"
+  fi
+  echo ""
+}
+
+cmd_prune_branches() {
+  local execute=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --execute)    execute=true ;;
+      --dry-run)    execute=false ;;
+      *)            die "Unknown flag: $1" ;;
+    esac
+    shift
+  done
+
+  if $execute; then
+    info "symphony-ctl prune-branches [EXECUTING]"
+  else
+    info "symphony-ctl prune-branches [DRY RUN]"
+  fi
+  echo ""
+
+  _do_prune_branches "$execute"
+  info "Summary: $_PRUNE_BRANCHES_COUNT merged branch(es)"
+  if ! $execute; then
+    info "Run with --execute to apply."
+  fi
+}
+
+# --- Analyze ---
+
+# Format milliseconds into a human-readable duration string.
+_fmt_duration() {
+  local ms="${1:-0}"
+  ms="${ms%%.*}"   # strip any decimal fraction jq may emit
+  ms="${ms:-0}"
+  local s=$((ms / 1000))
+  local m=$((s / 60))
+  local h=$((m / 60))
+  if   [[ $ms -lt 1000 ]];    then echo "${ms}ms"
+  elif [[ $s  -lt 60   ]];    then echo "${s}s"
+  elif [[ $m  -lt 60   ]];    then printf "%dm %ds" "$m" "$((s % 60))"
+  else                              printf "%dh %dm" "$h" "$((m % 60))"
+  fi
+}
+
+# Compute all analysis aggregates and return a JSON object via stdout.
+# Arguments: stage_json turn_json log_path
+_analyze_compute() {
+  local stages="$1" turns="$2" log_path="$3"
+
+  jq -n \
+    --argjson stages   "$stages"   \
+    --argjson turns    "$turns"    \
+    --arg     log_path "$log_path" \
+    '
+    def safe_div(a; b): if b == 0 then 0.0 else (a / b) end;
+
+    ($stages | length)                                              as $stage_count |
+    ($turns  | length)                                              as $turn_event_count |
+    ($stages | [.[].total_tokens      // 0] | add // 0)            as $total_tokens |
+    ($stages | [.[].input_tokens      // 0] | add // 0)            as $total_input |
+    ($stages | [.[].output_tokens     // 0] | add // 0)            as $total_output |
+    ($stages | [.[].cache_read_tokens  // 0] | add // 0)           as $total_cache_read |
+    ($stages | [.[].cache_write_tokens // 0] | add // 0)           as $total_cache_write |
+    ($stages | [.[].duration_ms       // 0] | add // 0)            as $total_duration |
+    ($stages | [.[].turn_count        // 0] | add // 0)            as $total_turns |
+    ($stages | [.[] | select(.outcome == "completed")] | length)   as $completed |
+    ($stages | [.[] | select(.outcome == "failed")]    | length)   as $failed |
+    ($stages | [.[] | .issue_identifier // "unknown"] | unique | length) as $issue_count |
+
+    safe_div($total_tokens; $stage_count)  as $avg_tokens |
+    safe_div($total_turns;  $stage_count)  as $avg_turns  |
+    safe_div($total_cache_read * 100; ($total_input + $total_cache_read)) as $cache_hit_pct |
+
+    # Per-issue aggregates (sorted by total tokens desc)
+    ($stages | group_by(.issue_identifier // "unknown") | map({
+      issue:             (.[0].issue_identifier  // "unknown"),
+      stages:            length,
+      turns:             ([.[].turn_count        // 0] | add // 0),
+      total_tokens:      ([.[].total_tokens      // 0] | add // 0),
+      input_tokens:      ([.[].input_tokens      // 0] | add // 0),
+      output_tokens:     ([.[].output_tokens     // 0] | add // 0),
+      cache_read_tokens: ([.[].cache_read_tokens // 0] | add // 0),
+      duration_ms:       ([.[].duration_ms       // 0] | add // 0),
+      completed:         ([.[] | select(.outcome == "completed")] | length),
+      failed:            ([.[] | select(.outcome == "failed")]    | length)
+    }) | sort_by(-.total_tokens)) as $per_issue |
+
+    # Per-stage-name averages (sorted alphabetically by stage name)
+    ($stages | group_by(.stage_name // "unknown") | map({
+      stage:           (.[0].stage_name // "unknown"),
+      count:           length,
+      avg_turns:       safe_div([.[].turn_count        // 0] | add // 0; length),
+      avg_tokens:      safe_div([.[].total_tokens      // 0] | add // 0; length),
+      avg_cache_read:  safe_div([.[].cache_read_tokens // 0] | add // 0; length),
+      avg_duration_ms: safe_div([.[].duration_ms       // 0] | add // 0; length),
+      completed:       ([.[] | select(.outcome == "completed")] | length),
+      failed:          ([.[] | select(.outcome == "failed")]    | length)
+    }) | sort_by(.stage)) as $per_stage |
+
+    # Per-turn stats from turn_completed events
+    ($turns | {
+      count:       length,
+      avg_tokens:  safe_div([.[].total_tokens  // 0] | add // 0; length),
+      avg_input:   safe_div([.[].input_tokens  // 0] | add // 0; length),
+      avg_cache_read: safe_div([.[].cache_read_tokens // 0] | add // 0; length)
+    }) as $per_turn |
+
+    # Outliers: stages where total_tokens or turn_count > 2x overall average
+    ([$stages[] |
+      select(
+        (($avg_tokens > 0) and ((.total_tokens // 0) > ($avg_tokens * 2))) or
+        (($avg_turns  > 0) and ((.turn_count   // 0) > ($avg_turns  * 2)))
+      ) |
+      {
+        issue:        (.issue_identifier // "unknown"),
+        stage:        (.stage_name       // "unknown"),
+        total_tokens: (.total_tokens     // 0),
+        turn_count:   (.turn_count       // 0),
+        token_ratio:  (if $avg_tokens > 0 then ((.total_tokens // 0) / $avg_tokens) else 0 end),
+        turn_ratio:   (if $avg_turns  > 0 then ((.turn_count   // 0) / $avg_turns ) else 0 end)
+      }
+    ]) as $outliers |
+
+    {
+      log_path: $log_path,
+      summary: {
+        stage_count:              $stage_count,
+        turn_event_count:         $turn_event_count,
+        issue_count:              $issue_count,
+        total_tokens:             $total_tokens,
+        total_input_tokens:       $total_input,
+        total_output_tokens:      $total_output,
+        total_cache_read_tokens:  $total_cache_read,
+        total_cache_write_tokens: $total_cache_write,
+        total_turns:              $total_turns,
+        total_duration_ms:        $total_duration,
+        completed:                $completed,
+        failed:                   $failed,
+        avg_tokens_per_stage:     $avg_tokens,
+        avg_turns_per_stage:      $avg_turns,
+        cache_hit_pct:            $cache_hit_pct
+      },
+      per_issue:  $per_issue,
+      per_stage:  $per_stage,
+      per_turn:   $per_turn,
+      outliers:   $outliers
+    }
+    '
+}
+
+# Print a human-readable report from the JSON produced by _analyze_compute.
+_analyze_print() {
+  local report="$1"
+
+  local BAR="════════════════════════════════════════════════════════════"
+  local SEP="────────────────────────────────────────────────────────────"
+
+  # --- Header ---
+  local log_path
+  log_path="$(echo "$report" | jq -r '.log_path')"
+  echo ""
+  echo "$BAR"
+  echo "  SYMPHONY RUN ANALYSIS"
+  printf "  Log: %s\n" "$log_path"
+  echo "$BAR"
+  echo ""
+
+  # --- Run Summary ---
+  local stage_count issue_count completed failed
+  local total_tokens total_input total_output total_cache_read
+  local cache_hit_pct total_dur_ms avg_turns avg_tokens turn_event_count
+  stage_count=$(      echo "$report" | jq -r '.summary.stage_count')
+  issue_count=$(      echo "$report" | jq -r '.summary.issue_count')
+  completed=$(        echo "$report" | jq -r '.summary.completed')
+  failed=$(           echo "$report" | jq -r '.summary.failed')
+  total_tokens=$(     echo "$report" | jq -r '.summary.total_tokens')
+  total_input=$(      echo "$report" | jq -r '.summary.total_input_tokens')
+  total_output=$(     echo "$report" | jq -r '.summary.total_output_tokens')
+  total_cache_read=$( echo "$report" | jq -r '.summary.total_cache_read_tokens')
+  cache_hit_pct=$(    echo "$report" | jq -r '.summary.cache_hit_pct | . * 10 | round / 10')
+  total_dur_ms=$(     echo "$report" | jq -r '.summary.total_duration_ms')
+  avg_turns=$(        echo "$report" | jq -r '.summary.avg_turns_per_stage | . * 10 | round / 10')
+  avg_tokens=$(       echo "$report" | jq -r '.summary.avg_tokens_per_stage | round')
+  turn_event_count=$( echo "$report" | jq -r '.summary.turn_event_count')
+
+  echo "Run Summary"
+  echo "$SEP"
+  printf "  Stages:       %d (%d completed, %d failed)\n" "$stage_count" "$completed" "$failed"
+  printf "  Issues:       %d\n"   "$issue_count"
+  printf "  Turns logged: %d\n"   "$turn_event_count"
+  printf "  Total time:   %s\n"   "$(_fmt_duration "$total_dur_ms")"
+  printf "  Tokens:       %d total\n"   "$total_tokens"
+  printf "    Input:      %d\n"   "$total_input"
+  printf "    Output:     %d\n"   "$total_output"
+  printf "    Cache hit:  %d (%.1f%% of input)\n" "$total_cache_read" "$cache_hit_pct"
+  printf "  Avg/stage:    %.1f turns, %d tokens\n" "$avg_turns" "$avg_tokens"
+  echo ""
+
+  # --- Per-Issue Table ---
+  local issue_row_count
+  issue_row_count=$(echo "$report" | jq -r '.per_issue | length')
+
+  if [[ "$issue_row_count" -gt 0 ]]; then
+    echo "Per-Issue Summary"
+    echo "$SEP"
+    printf "  %-14s  %6s  %5s  %10s  %10s  %s\n" \
+      "ISSUE" "STAGES" "TURNS" "TOKENS" "DURATION" "STATUS"
+    while IFS=$'\t' read -r issue stages turns tokens dur status; do
+      printf "  %-14s  %6s  %5s  %10d  %10s  %s\n" \
+        "$issue" "$stages" "$turns" "$tokens" "$(_fmt_duration "$dur")" "$status"
+    done < <(echo "$report" | jq -r '
+      .per_issue[] |
+      [
+        (.issue // "unknown"),
+        (.stages | tostring),
+        (.turns  | tostring),
+        (.total_tokens | tostring),
+        (.duration_ms  | tostring),
+        (if .failed > 0 then "FAILED(\(.failed))" else "ok" end)
+      ] | @tsv
+    ')
+    echo ""
+  fi
+
+  # --- Per-Stage Averages ---
+  local stage_row_count
+  stage_row_count=$(echo "$report" | jq -r '.per_stage | length')
+
+  if [[ "$stage_row_count" -gt 0 ]]; then
+    echo "Per-Stage Averages"
+    echo "$SEP"
+    printf "  %-14s  %5s  %9s  %10s  %10s  %s\n" \
+      "STAGE" "COUNT" "AVG TURNS" "AVG TOKENS" "AVG TIME" "OK/FAIL"
+    while IFS=$'\t' read -r stage count avg_t avg_tok avg_dur ok_fail; do
+      printf "  %-14s  %5s  %9s  %10d  %10s  %s\n" \
+        "$stage" "$count" "$avg_t" "$avg_tok" "$(_fmt_duration "$avg_dur")" "$ok_fail"
+    done < <(echo "$report" | jq -r '
+      .per_stage[] |
+      [
+        (.stage // "unknown"),
+        (.count | tostring),
+        (.avg_turns | . * 10 | round / 10 | tostring),
+        (.avg_tokens | round | tostring),
+        (.avg_duration_ms | round | tostring),
+        "\(.completed)/\(.failed)"
+      ] | @tsv
+    ')
+    echo ""
+  fi
+
+  # --- Per-Turn Granularity ---
+  local turn_count turn_avg_tokens turn_avg_input turn_avg_cache
+  turn_count=$(      echo "$report" | jq -r '.per_turn.count')
+  turn_avg_tokens=$( echo "$report" | jq -r '.per_turn.avg_tokens | round')
+  turn_avg_input=$(  echo "$report" | jq -r '.per_turn.avg_input  | round')
+  turn_avg_cache=$(  echo "$report" | jq -r '.per_turn.avg_cache_read | round')
+
+  if [[ "$turn_count" -gt 0 ]]; then
+    echo "Per-Turn Granularity"
+    echo "$SEP"
+    printf "  Turns observed:   %d\n"   "$turn_count"
+    printf "  Avg tokens/turn:  %d total (%d input, %d cache read)\n" \
+      "$turn_avg_tokens" "$turn_avg_input" "$turn_avg_cache"
+    echo ""
+  fi
+
+  # --- Cache Efficiency ---
+  echo "Cache Efficiency"
+  echo "$SEP"
+  printf "  Overall: %.1f%% of input served from cache (%d tokens)\n" \
+    "$cache_hit_pct" "$total_cache_read"
+  if [[ "$issue_row_count" -gt 0 ]]; then
+    while IFS=$'\t' read -r issue cr pct; do
+      printf "  %-14s: %.1f%% cache hit (%d tokens)\n" "$issue" "$pct" "$cr"
+    done < <(echo "$report" | jq -r '
+      .per_issue[] |
+      (if (.input_tokens + .cache_read_tokens) > 0
+       then (.cache_read_tokens * 100 / (.input_tokens + .cache_read_tokens))
+       else 0 end) as $pct |
+      [
+        (.issue // "unknown"),
+        (.cache_read_tokens | tostring),
+        ($pct | . * 10 | round / 10 | tostring)
+      ] | @tsv
+    ')
+  fi
+  echo ""
+
+  # --- Outlier Flags ---
+  local outlier_count
+  outlier_count=$(echo "$report" | jq -r '.outliers | length')
+
+  echo "Outlier Flags"
+  echo "$SEP"
+  if [[ "$outlier_count" -gt 0 ]]; then
+    while IFS=$'\t' read -r issue stage tokens turns token_ratio turn_ratio; do
+      printf "  %s / %s: %d tokens (%.1fx avg), %d turns (%.1fx avg)\n" \
+        "$issue" "$stage" "$tokens" "$token_ratio" "$turns" "$turn_ratio"
+    done < <(echo "$report" | jq -r '
+      .outliers[] |
+      [
+        (.issue // "unknown"),
+        (.stage // "unknown"),
+        (.total_tokens | tostring),
+        (.turn_count   | tostring),
+        (.token_ratio  | . * 10 | round / 10 | tostring),
+        (.turn_ratio   | . * 10 | round / 10 | tostring)
+      ] | @tsv
+    ')
+  else
+    echo "  (none)"
+  fi
+  echo ""
+}
+
+cmd_analyze() {
+  local json_output=false
+  local log_path=""
+
+  # Parse flags and positional argument
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json)
+        json_output=true ;;
+      -*)
+        die "Unknown flag: $1" ;;
+      *)
+        [[ -z "$log_path" ]] || die "Unexpected argument: $1"
+        log_path="$1"
+        ;;
+    esac
+    shift
+  done
+
+  # Default: symphony.jsonl under $LOG_DIR
+  if [[ -z "$log_path" ]]; then
+    log_path="$LOG_DIR/symphony.jsonl"
+    [[ -f "$log_path" ]] || die "No symphony.jsonl found at $log_path. Pass a path explicitly."
+  fi
+
+  [[ -f "$log_path" ]] || die "Log file not found: $log_path"
+  command -v jq &>/dev/null || die "jq is required for the analyze command. Install with: brew install jq"
+
+  # Slurp only the event types we care about (ignore all others)
+  local stage_json turn_json
+  stage_json="$(jq -cs '[.[] | select(.event == "stage_completed")]' "$log_path" 2>/dev/null || echo '[]')"
+  turn_json="$(jq -cs  '[.[] | select(.event == "turn_completed")]'  "$log_path" 2>/dev/null || echo '[]')"
+
+  # Compute aggregates
+  local report
+  report="$(_analyze_compute "$stage_json" "$turn_json" "$log_path")"
+
+  if $json_output; then
+    echo "$report"
+  else
+    _analyze_print "$report"
+  fi
+}
+
+# --- Main ---
+
+usage() {
+  cat <<EOF
+symphony-ctl — manage symphony-ts as a macOS launchd service
+
+Usage: symphony-ctl <command>
+
+Commands:
+  install            Register the launchd service (does not start it)
+  uninstall          Stop and remove the launchd service
+  start              Start the service
+  stop               Stop the service
+  restart            Stop and start the service
+  status             Show service status and recent logs
+  logs               Open full log in pager (default: stderr, pass 'stdout' for stdout)
+  tail               Tail both stdout and stderr logs
+  install-logrotate  Install newsyslog config for log rotation (requires sudo)
+  cleanup            Detect stale pipeline artifacts (dry-run by default)
+                       --execute           Actually remove/close artifacts
+                       --skip-github       Skip PR/branch cleanup
+                       --skip-linear       Skip Linear API queries
+                       --prune-branches    Also run branch pruning phase
+  prune-branches     Prune merged local branches (dry-run by default)
+                       --execute       Delete merged branches (git branch -d)
+                       --dry-run       Print what would be deleted (default)
+  analyze            Analyze a JSONL run log and print a report
+                       [path]          Path to symphony.jsonl
+                                       (default: \$LOG_DIR/symphony.jsonl)
+                       --json          Output machine-readable JSON instead of text
+
+Environment:
+  SYMPHONY_PROJECT    Project name for label/logs (default: symphony)
+  SYMPHONY_ENV_FILE   Path to .env file (default: <symphony-root>/.env)
+  SYMPHONY_WORKFLOW   Path to WORKFLOW.md (default: pipeline-config/workflows/WORKFLOW-\$SYMPHONY_PROJECT.md)
+  SYMPHONY_NODE       Path to node binary (default: auto-detected)
+
+EOF
+}
+
+case "${1:-}" in
+  install)            cmd_install ;;
+  uninstall)          cmd_uninstall ;;
+  start)              cmd_start ;;
+  stop)               cmd_stop ;;
+  restart)            cmd_restart ;;
+  status)             cmd_status ;;
+  logs)               cmd_logs "${2:-stderr}" ;;
+  tail)               cmd_tail ;;
+  install-logrotate)  cmd_install_logrotate ;;
+  cleanup)            shift; cmd_cleanup "$@" ;;
+  prune-branches)     shift; cmd_prune_branches "$@" ;;
+  analyze)            shift; cmd_analyze "$@" ;;
+  -h|--help)          usage ;;
+  --version|-V)       "$NODE_BIN" "$CLI_JS" --version ;;
+  *)                  usage; exit 1 ;;
+esac

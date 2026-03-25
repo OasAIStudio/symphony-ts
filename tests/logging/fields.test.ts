@@ -21,4 +21,10 @@ describe("LOG_FIELDS", () => {
     expect(LOG_FIELDS).toContain("rate_limit_requests_remaining");
     expect(LOG_FIELDS).toContain("rate_limit_tokens_remaining");
   });
+
+  it("includes per-turn observability fields", () => {
+    expect(LOG_FIELDS).toContain("turn_number");
+    expect(LOG_FIELDS).toContain("prompt_chars");
+    expect(LOG_FIELDS).toContain("estimated_prompt_tokens");
+  });
 });
