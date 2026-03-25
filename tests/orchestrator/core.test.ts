@@ -1776,6 +1776,48 @@ describe("execution history stage records", () => {
     expect(record.outcome).toBe("normal");
   });
 
+  it("StageRecord captures per-type tokens on stage completion", async () => {
+    const config = createStageConfig();
+    const orchestrator = createOrchestrator({
+      config,
+      now: () => new Date("2026-03-06T00:00:05.000Z"),
+    });
+
+    await orchestrator.pollTick();
+    orchestrator.getState().issueStages["1"] = "investigate";
+
+    // Simulate turn_completed with 3000 input and 2000 output tokens
+    orchestrator.onCodexEvent({
+      issueId: "1",
+      event: {
+        event: "turn_completed",
+        timestamp: "2026-03-06T00:00:06.000Z",
+        codexAppServerPid: "1001",
+        sessionId: "s1",
+        threadId: "t1",
+        turnId: "turn-1",
+        usage: { inputTokens: 3000, outputTokens: 2000, totalTokens: 5000 },
+        rateLimits: {},
+        message: "done",
+      },
+    });
+
+    orchestrator.onWorkerExit({
+      issueId: "1",
+      outcome: "normal",
+      endedAt: new Date("2026-03-06T00:01:05.000Z"),
+    });
+
+    const history = orchestrator.getState().issueExecutionHistory["1"];
+    expect(history).toBeDefined();
+    expect(history).toHaveLength(1);
+    const record = history![0]!;
+    expect(record.stageName).toBe("investigate");
+    expect(record.inputTokens).toBe(3000);
+    expect(record.outputTokens).toBe(2000);
+    expect(record.totalTokens).toBe(5000);
+  });
+
   it("accumulates records across multiple stages", async () => {
     const config = createStageConfig();
     const orchestrator = createOrchestrator({ config });

@@ -453,6 +453,8 @@ export class OrchestratorCore {
         stageName,
         durationMs: endedAt.getTime() - Date.parse(runningEntry.startedAt),
         totalTokens: runningEntry.totalStageTotalTokens,
+        inputTokens: runningEntry.totalStageInputTokens,
+        outputTokens: runningEntry.totalStageOutputTokens,
         turns: runningEntry.turnCount,
         outcome: classifiedOutcome,
       };

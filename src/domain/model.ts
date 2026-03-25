@@ -167,6 +167,8 @@ export interface StageRecord {
   stageName: string;
   durationMs: number;
   totalTokens: number;
+  inputTokens?: number;
+  outputTokens?: number;
   turns: number;
   outcome: string;
 }
