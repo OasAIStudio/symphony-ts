@@ -93,14 +93,15 @@ async function* createAsyncIterable(chunks: string[]): AsyncIterable<string> {
   }
 }
 
-// Helper to create a mock streamText return value with response promise
+// Helper to create a mock streamText return value with response promise.
+// providerMetadata lives on the StreamTextResult itself (not on messages).
 function createMockStreamResult(chunks: string[], sessionId?: string) {
-  const messages = sessionId
-    ? [{ providerMetadata: { "claude-code": { sessionId } } }]
-    : [];
   return {
     textStream: createAsyncIterable(chunks),
-    response: Promise.resolve({ messages }),
+    response: Promise.resolve({ messages: [] }),
+    providerMetadata: Promise.resolve(
+      sessionId ? { "claude-code": { sessionId } } : undefined,
+    ),
   } as unknown as ReturnType<typeof streamText>;
 }
 

@@ -235,17 +235,13 @@ export function createMessageHandler(options: HandleMessageOptions) {
         throw error;
       }
 
-      // Extract and store session ID from provider metadata for continuity
-      const response = await result.response;
-      const msgCount = response.messages?.length ?? 0;
-      const lastMsg = response.messages?.[response.messages.length - 1] as
-        | {
-            providerMetadata?: {
-              "claude-code"?: { sessionId?: string };
-            };
-          }
+      // Extract and store session ID from provider metadata for continuity.
+      // providerMetadata lives on the StreamTextResult itself, NOT on
+      // individual response messages (which only carry role + content).
+      const metadata = (await result.providerMetadata) as
+        | { "claude-code"?: { sessionId?: string } }
         | undefined;
-      const ccSessionId = lastMsg?.providerMetadata?.["claude-code"]?.sessionId;
+      const ccSessionId = metadata?.["claude-code"]?.sessionId;
       if (ccSessionId) {
         setCcSessionId(ccSessions, threadTs, ccSessionId);
         process.stderr.write(
@@ -253,7 +249,7 @@ export function createMessageHandler(options: HandleMessageOptions) {
         );
       } else {
         process.stderr.write(
-          `[session-diag] NO SESSION ID in response (${msgCount} messages, lastMsg keys: ${lastMsg ? Object.keys(lastMsg).join(",") : "null"})\n`,
+          `[session-diag] NO SESSION ID in providerMetadata (keys: ${metadata ? Object.keys(metadata).join(",") : "null"})\n`,
         );
       }
 
