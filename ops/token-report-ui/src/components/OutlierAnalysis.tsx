@@ -75,7 +75,7 @@ export default function OutlierAnalysis({
               {o.issue_identifier}
             </a>{" "}
             &mdash; {o.issue_title} &mdash; {fmtNum(o.total_tokens)} tokens (
-            {o.multiplier}x mean)
+            {`${o.multiplier}x mean`})
           </div>
           <div className="outlier-hypothesis">
             {o.hypothesis ?? "No hypothesis available"}
