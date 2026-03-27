@@ -1,26 +1,54 @@
 {
   "cold_start": true,
   "cold_start_tier": "<7d",
-  "message": "insufficient data — rolling averages, inflection detection, and attribution require >=7 days",
+  "message": "insufficient data \u2014 rolling averages, inflection detection, and attribution require >=7 days",
   "analyzed_at": "2026-03-25T08:00:00.000Z",
   "data_span_days": 3,
   "record_count": 8,
   "efficiency_scorecard": {
-    "cache_efficiency": { "current": 0.45, "trend_7d": 0, "trend_30d": 0 },
-    "output_ratio": { "current": 0.28, "trend_7d": 0, "trend_30d": 0 },
-    "wasted_context": { "current": 0.15, "trend_7d": 0, "trend_30d": 0 },
-    "tokens_per_turn": { "current": 6200, "trend_7d": 0, "trend_30d": 0 },
-    "first_pass_rate": { "current": 60, "trend_7d": 100, "trend_30d": 100 },
+    "cache_efficiency": {
+      "current": 0.45,
+      "trend_7d": 0,
+      "trend_30d": 0
+    },
+    "output_ratio": {
+      "current": 0.28,
+      "trend_7d": 0,
+      "trend_30d": 0
+    },
+    "wasted_context": {
+      "current": 0.15,
+      "trend_7d": 0,
+      "trend_30d": 0
+    },
+    "tokens_per_turn": {
+      "current": 6200,
+      "trend_7d": 0,
+      "trend_30d": 0
+    },
+    "first_pass_rate": {
+      "current": 60,
+      "trend_7d": 100,
+      "trend_30d": 100
+    },
     "failure_rate": {
-      "current": { "implement": 0.12 },
+      "current": {
+        "implement": 0.12
+      },
       "trend_7d": {},
       "trend_30d": {}
     }
   },
   "executive_summary": {
-    "total_tokens": { "value": 420000 },
-    "total_stages": { "value": 8 },
-    "unique_issues": { "value": 3 },
+    "total_tokens": {
+      "value": 420000
+    },
+    "total_stages": {
+      "value": 8
+    },
+    "unique_issues": {
+      "value": 3
+    },
     "data_span_days": 3
   },
   "per_stage_spend": {
@@ -38,10 +66,20 @@
     }
   },
   "per_stage_trend": {
-    "investigate": { "daily_avg": 40000, "wow_delta": 0 },
-    "implement": { "daily_avg": 93333, "wow_delta": 0 }
+    "investigate": {
+      "daily_avg": 40000,
+      "wow_delta": 0
+    },
+    "implement": {
+      "daily_avg": 93333,
+      "wow_delta": 0
+    }
   },
-  "per_ticket_trend": { "median": 140000, "mean": 140000, "ticket_count": 3 },
+  "per_ticket_trend": {
+    "median": 140000,
+    "mean": 140000,
+    "ticket_count": 3
+  },
   "per_product": {
     "symphony-ts": {
       "total_tokens": 420000,
@@ -57,6 +95,13 @@
     "firstPass": [50.0, 55.0, 60.0],
     "failureRate": [15.0, 12.5, 12.0]
   },
-  "inflections": { "status": "insufficient data", "items": [] },
-  "outliers": { "status": "insufficient data", "items": [] }
+  "inflections": {
+    "status": "insufficient data",
+    "items": []
+  },
+  "outliers": {
+    "status": "insufficient data",
+    "items": []
+  },
+  "per_ticket_series": [130000, 145000, 140000]
 }

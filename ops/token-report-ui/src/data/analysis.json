@@ -7,23 +7,44 @@
     "cache_efficiency": {
       "current": 0.72,
       "trend_7d": 0.68,
-      "trend_30d": 0.65
+      "trend_30d": 0.65,
+      "series": [0.63, 0.66, 0.68, 0.7, 0.72]
     },
-    "output_ratio": { "current": 0.34, "trend_7d": 0.31, "trend_30d": 0.29 },
-    "wasted_context": { "current": 0.08, "trend_7d": 0.1, "trend_30d": 0.12 },
+    "output_ratio": {
+      "current": 0.34,
+      "trend_7d": 0.31,
+      "trend_30d": 0.29,
+      "series": [0.34, 0.35, 0.36, 0.36, 0.37]
+    },
+    "wasted_context": {
+      "current": 0.08,
+      "trend_7d": 0.1,
+      "trend_30d": 0.12,
+      "series": [0.22, 0.21, 0.2, 0.19, 0.18]
+    },
     "tokens_per_turn": {
       "current": 4820,
       "trend_7d": 5100,
-      "trend_30d": 5400
+      "trend_30d": 5400,
+      "series": [4800, 5100, 5300, 5200, 5000]
     },
     "first_pass_rate": {
       "current": 78.5,
       "trend_7d": 75.2,
-      "trend_30d": 72.0
+      "trend_30d": 72.0,
+      "series": [74.0, 76.5, 78.0, 80.5, 82.0]
     },
     "failure_rate": {
-      "current": { "investigate": 0.02, "implement": 0.08, "validate": 0.05 },
-      "trend_7d": { "investigate": 0.03, "implement": 0.1, "validate": 0.06 },
+      "current": {
+        "investigate": 0.02,
+        "implement": 0.08,
+        "validate": 0.05
+      },
+      "trend_7d": {
+        "investigate": 0.03,
+        "implement": 0.1,
+        "validate": 0.06
+      },
       "trend_30d": {
         "investigate": 0.04,
         "implement": 0.12,
@@ -32,9 +53,15 @@
     }
   },
   "executive_summary": {
-    "total_tokens": { "value": 18420000 },
-    "total_stages": { "value": 312 },
-    "unique_issues": { "value": 47 },
+    "total_tokens": {
+      "value": 18420000
+    },
+    "total_stages": {
+      "value": 312
+    },
+    "unique_issues": {
+      "value": 47
+    },
     "data_span_days": 45
   },
   "per_stage_spend": {
@@ -70,11 +97,26 @@
     }
   },
   "per_stage_trend": {
-    "investigate": { "daily_avg": 71111, "wow_delta": -0.05 },
-    "implement": { "daily_avg": 217778, "wow_delta": 0.03 },
-    "validate": { "daily_avg": 46667, "wow_delta": -0.02 },
-    "spec-gen": { "daily_avg": 33333, "wow_delta": 0.0 },
-    "review": { "daily_avg": 40444, "wow_delta": -0.01 }
+    "investigate": {
+      "daily_avg": 71111,
+      "wow_delta": -0.05
+    },
+    "implement": {
+      "daily_avg": 217778,
+      "wow_delta": 0.03
+    },
+    "validate": {
+      "daily_avg": 46667,
+      "wow_delta": -0.02
+    },
+    "spec-gen": {
+      "daily_avg": 33333,
+      "wow_delta": 0.0
+    },
+    "review": {
+      "daily_avg": 40444,
+      "wow_delta": -0.01
+    }
   },
   "per_ticket_trend": {
     "median": 52000,
@@ -160,5 +202,6 @@
       "z_score": 2.8,
       "reason": "Deep codebase exploration across 3 repos"
     }
-  ]
+  ],
+  "per_ticket_series": [45000, 50000, 54000, 51000, 52000]
 }

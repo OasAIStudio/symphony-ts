@@ -90,6 +90,7 @@ export default function App() {
       />
       <PerTicketCostTrend
         perTicket={data.per_ticket_trend}
+        perTicketSeries={data.per_ticket_series}
         coldStart={isColdStart}
         dataSpanDays={data.data_span_days}
       />
