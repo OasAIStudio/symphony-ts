@@ -77,7 +77,11 @@ export default function App() {
         cacheHitRate={cacheHitRate}
         cacheWow={cacheWow}
       />
-      <EfficiencyScorecard scorecard={sc} coldStart={isColdStart} />
+      <EfficiencyScorecard
+        scorecard={sc}
+        series={data.daily_series}
+        coldStart={isColdStart}
+      />
       <PerStageTrend
         perStageTrend={data.per_stage_trend}
         inflections={inflections}

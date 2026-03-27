@@ -87,6 +87,15 @@ export interface InsufficientData {
   items: never[];
 }
 
+export interface DailySeries {
+  cacheEff?: number[];
+  outputRatio?: number[];
+  wastedCtx?: number[];
+  tokPerTurn?: number[];
+  firstPass?: number[];
+  failureRate?: number[];
+}
+
 export interface AnalysisData {
   cold_start_tier: "<7d" | "7-29d" | ">=30d";
   cold_start?: boolean;
@@ -100,6 +109,7 @@ export interface AnalysisData {
   per_stage_trend: Record<string, StageTrend>;
   per_ticket_trend: PerTicketTrend;
   per_product: Record<string, ProductData>;
+  daily_series?: DailySeries;
   inflections: Inflection[] | InsufficientData;
   outliers: Outlier[] | InsufficientData;
 }

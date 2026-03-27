@@ -49,6 +49,14 @@
       "unique_issues": 3
     }
   },
+  "daily_series": {
+    "cacheEff": [42.0, 44.5, 45.0],
+    "outputRatio": [26.0, 27.5, 28.0],
+    "wastedCtx": [16.0, 15.5, 15.0],
+    "tokPerTurn": [6500, 6350, 6200],
+    "firstPass": [50.0, 55.0, 60.0],
+    "failureRate": [15.0, 12.5, 12.0]
+  },
   "inflections": { "status": "insufficient data", "items": [] },
   "outliers": { "status": "insufficient data", "items": [] }
 }

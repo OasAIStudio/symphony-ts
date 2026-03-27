@@ -961,6 +961,64 @@ describe("token-report.mjs analyze", () => {
     expect(result.executive_summary).toBeDefined();
     expect(result.per_product).toEqual({});
     expect(result.outliers).toEqual([]);
+    // daily_series present with empty arrays
+    expect(result.daily_series).toBeDefined();
+    expect(result.daily_series.cacheEff).toEqual([]);
+    expect(result.daily_series.failureRate).toEqual([]);
+  });
+
+  it("daily_series has correct shape for cold start (<7d)", () => {
+    const records = generateDaysOfRecords(3, 2);
+    writeTokenHistory(symphonyHome, records);
+    writeConfigHistory(symphonyHome, [makeConfigSnapshot()]);
+
+    const result = runAnalyze(symphonyHome);
+
+    expect(result.daily_series).toBeDefined();
+    const ds = result.daily_series;
+    // All six series keys present
+    for (const key of [
+      "cacheEff",
+      "outputRatio",
+      "wastedCtx",
+      "tokPerTurn",
+      "firstPass",
+      "failureRate",
+    ]) {
+      expect(Array.isArray(ds[key])).toBe(true);
+      // 3 days of data → up to 3 values (sparse)
+      expect(ds[key].length).toBeGreaterThan(0);
+      expect(ds[key].length).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it("daily_series has correct shape for mature data (>=30d)", () => {
+    const records = generateDaysOfRecords(35, 3);
+    writeTokenHistory(symphonyHome, records);
+    writeConfigHistory(symphonyHome, [makeConfigSnapshot()]);
+
+    const result = runAnalyze(symphonyHome);
+
+    expect(result.cold_start_tier).toBe(">=30d");
+    expect(result.daily_series).toBeDefined();
+    const ds = result.daily_series;
+    for (const key of [
+      "cacheEff",
+      "outputRatio",
+      "wastedCtx",
+      "tokPerTurn",
+      "firstPass",
+      "failureRate",
+    ]) {
+      expect(Array.isArray(ds[key])).toBe(true);
+      // 30-day window, so up to 30 values
+      expect(ds[key].length).toBeGreaterThan(0);
+      expect(ds[key].length).toBeLessThanOrEqual(30);
+    }
+    // Values should be numeric
+    for (const v of ds.cacheEff) {
+      expect(typeof v).toBe("number");
+    }
   });
 });
 

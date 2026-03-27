@@ -1096,6 +1096,27 @@ function detectOutliers(records) {
 }
 
 /**
+ * Build a daily metric series over the last 30 days.
+ * Port of the closure inside renderHtml() — made top-level so computeAnalysis() can reuse it.
+ * @param {Array} records - JSONL records to aggregate
+ * @param {function} metricFn - (dayRecords: Array) => number
+ * @returns {number[]} sparse array (only days with data)
+ */
+function buildDailyMetricSeries(records, metricFn) {
+  const now = new Date();
+  const vals = [];
+  for (let i = 29; i >= 0; i--) {
+    const dayStart = daysAgo(i + 1, now);
+    const dayEnd = daysAgo(i, now);
+    const dayRecords = filterByDateRange(records, dayStart, dayEnd);
+    if (dayRecords.length > 0) {
+      vals.push(metricFn(dayRecords));
+    }
+  }
+  return vals;
+}
+
+/**
  * Compute per-stage token spend (includes ALL stages, both completed and failed).
  */
 function computePerStageSpend(records) {
@@ -1144,6 +1165,14 @@ function computeAnalysis() {
       per_stage_trend: {},
       per_ticket_trend: { median: 0, mean: 0, ticket_count: 0 },
       per_product: {},
+      daily_series: {
+        cacheEff: [],
+        outputRatio: [],
+        wastedCtx: [],
+        tokPerTurn: [],
+        firstPass: [],
+        failureRate: [],
+      },
       inflections: [],
       outliers: [],
     };
@@ -1174,6 +1203,35 @@ function computeAnalysis() {
     inflections = [];
   }
 
+  // Build daily metric series for efficiency scorecard sparklines
+  const dailySeries = {
+    cacheEff: buildDailyMetricSeries(records, (recs) => {
+      const sc = computeEfficiencyScorecard(recs);
+      return sc.cache_efficiency;
+    }),
+    outputRatio: buildDailyMetricSeries(records, (recs) => {
+      const sc = computeEfficiencyScorecard(recs);
+      return sc.output_ratio;
+    }),
+    wastedCtx: buildDailyMetricSeries(records, (recs) => {
+      const sc = computeEfficiencyScorecard(recs);
+      return sc.wasted_context;
+    }),
+    tokPerTurn: buildDailyMetricSeries(records, (recs) => {
+      const sc = computeEfficiencyScorecard(recs);
+      return sc.tokens_per_turn;
+    }),
+    firstPass: buildDailyMetricSeries(records, (recs) => {
+      const sc = computeEfficiencyScorecard(recs);
+      return sc.first_pass_rate;
+    }),
+    failureRate: buildDailyMetricSeries(records, (recs) => {
+      const total = recs.length;
+      const failed = recs.filter((r) => r.outcome === "failed").length;
+      return total > 0 ? (failed / total) * 100 : 0;
+    }),
+  };
+
   return {
     ...(isColdStart && { cold_start: true }),
     cold_start_tier: tier,
@@ -1190,6 +1248,7 @@ function computeAnalysis() {
     per_stage_trend: perStageTrend,
     per_ticket_trend: perTicketTrend,
     per_product: perProduct,
+    daily_series: dailySeries,
     inflections:
       tier === "<7d" ? { status: "insufficient data", items: [] } : inflections,
     outliers:
