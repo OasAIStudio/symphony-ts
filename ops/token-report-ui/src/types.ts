@@ -73,7 +73,15 @@ export interface Inflection {
   metric: string;
   direction: string;
   magnitude: number;
-  context: string;
+  context: string | null;
+  avg_7d: number;
+  avg_30d: number;
+  attributions: Array<{
+    type: string;
+    description: string;
+    [key: string]: unknown;
+  }>;
+  llm_insight: string | null;
 }
 
 export interface Outlier {

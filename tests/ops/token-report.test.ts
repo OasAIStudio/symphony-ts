@@ -809,8 +809,18 @@ describe("token-report.mjs analyze", () => {
     // With the spike, we should detect an inflection
     expect(result.inflections.length).toBeGreaterThanOrEqual(1);
     if (result.inflections.length > 0) {
-      expect(result.inflections[0].attributions).toBeDefined();
-      expect(Array.isArray(result.inflections[0].attributions)).toBe(true);
+      const inf = result.inflections[0];
+      // New UI-expected shape (SYMPH-185)
+      expect(inf.metric).toBeDefined();
+      expect(inf.date).toBeDefined();
+      expect(typeof inf.magnitude).toBe("number");
+      expect(["up", "down"]).toContain(inf.direction);
+      expect(inf.attributions).toBeDefined();
+      expect(Array.isArray(inf.attributions)).toBe(true);
+      expect(inf.avg_7d).toBeDefined();
+      expect(inf.avg_30d).toBeDefined();
+      // LLM insight is null when TOKEN_REPORT_LLM is not set
+      expect(inf.llm_insight).toBeNull();
     }
   });
 
@@ -872,10 +882,48 @@ describe("token-report.mjs analyze", () => {
     expect(Array.isArray(result.inflections)).toBe(true);
     // Should detect the decrease
     if (result.inflections.length > 0) {
-      expect(result.inflections[0].attributions.length).toBeGreaterThanOrEqual(
-        0,
+      const inf = result.inflections[0];
+      // New UI-expected shape (SYMPH-185)
+      expect(inf.metric).toBe("review");
+      expect(inf.direction).toBe("down");
+      expect(typeof inf.magnitude).toBe("number");
+      expect(inf.attributions.length).toBeGreaterThanOrEqual(0);
+      expect(inf.llm_insight).toBeNull();
+    }
+  });
+
+  it("excludes spec-gen stage from per_stage_spend aggregation", () => {
+    const records: Record<string, unknown>[] = [];
+    const now = new Date();
+
+    // Create records for implement and spec-gen stages
+    for (let d = 0; d < 10; d++) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - d);
+      records.push(
+        makeTokenRecord({
+          timestamp: date.toISOString(),
+          stage_name: "implement",
+          total_total_tokens: 3000,
+        }),
+      );
+      records.push(
+        makeTokenRecord({
+          timestamp: date.toISOString(),
+          stage_name: "spec-gen",
+          total_total_tokens: 1000,
+        }),
       );
     }
+
+    writeTokenHistory(symphonyHome, records);
+    writeConfigHistory(symphonyHome, [makeConfigSnapshot()]);
+
+    const result = runAnalyze(symphonyHome);
+
+    // spec-gen should be excluded from per_stage_spend
+    expect(result.per_stage_spend["spec-gen"]).toBeUndefined();
+    expect(result.per_stage_spend.implement).toBeDefined();
   });
 
   it("outlier detection with Linear hypothesis structure", () => {

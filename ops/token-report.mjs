@@ -1207,6 +1207,36 @@ function computePerStageSpend(records) {
  * Compute analysis result object from token/config history.
  * Returns the result object (does not write to stdout).
  */
+/**
+ * Generate LLM insight for an inflection using `claude -p` CLI.
+ * Gated behind TOKEN_REPORT_LLM=1 env var — returns null otherwise.
+ * Graceful degradation: returns null if CLI unavailable or fails.
+ */
+function generateInflectionInsight(inflection) {
+  if (process.env.TOKEN_REPORT_LLM !== "1") return null;
+  try {
+    const prompt = [
+      "You are a DevOps analyst. Analyze this token usage inflection and provide a 1-2 sentence insight.",
+      `Stage: ${inflection.metric}`,
+      `Direction: ${inflection.direction}`,
+      `Magnitude: ${(inflection.magnitude * 100).toFixed(1)}%`,
+      `7-day avg: ${inflection.avg_7d} tokens`,
+      `30-day avg: ${inflection.avg_30d} tokens`,
+      inflection.context ? `Context: ${inflection.context}` : "",
+      "Respond with only the insight, no preamble.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const result = execFileSync("claude", ["-p", prompt], {
+      encoding: "utf-8",
+      timeout: 30_000,
+    });
+    return result.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 function computeAnalysis() {
   const records = readJsonl(TOKEN_HISTORY_PATH);
   const configRecords = readJsonl(CONFIG_HISTORY_PATH);
@@ -1249,56 +1279,84 @@ function computeAnalysis() {
     };
   }
 
-  const spanDays = dataSpanDays(records);
+  // Filter spec-gen stage from all aggregations (SYMPH-185)
+  const filteredRecords = records.filter((r) => r.stage_name !== "spec-gen");
+
+  const spanDays = dataSpanDays(filteredRecords);
   const tier = coldStartTier(spanDays);
   const now = new Date();
 
   const isColdStart = spanDays < 7;
 
-  const scorecard = computeScorecardWithTrends(records, now);
-  const executiveSummary = buildExecutiveSummary(records, spanDays, now);
-  const perStageSpend = computePerStageSpend(records);
-  const perStageStats = computePerStageStats(records);
-  const perStageTrend = computePerStageTrend(records, configRecords);
-  const perTicketTrend = computePerTicketTrend(records);
-  const perProduct = computePerProduct(records);
-  const leaderboard = buildLeaderboard(records);
+  const scorecard = computeScorecardWithTrends(filteredRecords, now);
+  const executiveSummary = buildExecutiveSummary(
+    filteredRecords,
+    spanDays,
+    now,
+  );
+  const perStageSpend = computePerStageSpend(filteredRecords);
+  const perStageStats = computePerStageStats(filteredRecords);
+  const perStageTrend = computePerStageTrend(filteredRecords, configRecords);
+  const perTicketTrend = computePerTicketTrend(filteredRecords);
+  const perProduct = computePerProduct(filteredRecords);
+  const leaderboard = buildLeaderboard(filteredRecords);
 
   // Inflection detection and outliers: only meaningful with sufficient data
   let inflections = [];
   let outliers = [];
 
   if (tier === ">=30d") {
-    inflections = detectInflections(records, configRecords, now);
-    outliers = detectOutliers(records);
+    const d7 = daysAgo(7, now);
+    const rawInflections = detectInflections(
+      filteredRecords,
+      configRecords,
+      now,
+    );
+    // Transform detectInflections output to UI Inflection shape (SYMPH-185)
+    inflections = rawInflections.map((inf) => {
+      const mapped = {
+        date: dateKey(d7),
+        metric: inf.stage,
+        direction: inf.direction === "increase" ? "up" : "down",
+        magnitude: round(Math.abs(inf.pct_change) / 100, 2),
+        context: inf.attributions.map((a) => a.description).join("; ") || null,
+        avg_7d: inf.avg_7d,
+        avg_30d: inf.avg_30d,
+        attributions: inf.attributions,
+        llm_insight: null,
+      };
+      mapped.llm_insight = generateInflectionInsight(mapped);
+      return mapped;
+    });
+    outliers = detectOutliers(filteredRecords);
   } else if (tier === "7-29d") {
-    outliers = detectOutliers(records);
+    outliers = detectOutliers(filteredRecords);
     inflections = [];
   }
 
   // Build daily metric series for efficiency scorecard sparklines
   const dailySeries = {
-    cacheEff: buildDailyMetricSeries(records, (recs) => {
+    cacheEff: buildDailyMetricSeries(filteredRecords, (recs) => {
       const sc = computeEfficiencyScorecard(recs);
       return sc.cache_efficiency;
     }),
-    outputRatio: buildDailyMetricSeries(records, (recs) => {
+    outputRatio: buildDailyMetricSeries(filteredRecords, (recs) => {
       const sc = computeEfficiencyScorecard(recs);
       return sc.output_ratio;
     }),
-    wastedCtx: buildDailyMetricSeries(records, (recs) => {
+    wastedCtx: buildDailyMetricSeries(filteredRecords, (recs) => {
       const sc = computeEfficiencyScorecard(recs);
       return sc.wasted_context;
     }),
-    tokPerTurn: buildDailyMetricSeries(records, (recs) => {
+    tokPerTurn: buildDailyMetricSeries(filteredRecords, (recs) => {
       const sc = computeEfficiencyScorecard(recs);
       return sc.tokens_per_turn;
     }),
-    firstPass: buildDailyMetricSeries(records, (recs) => {
+    firstPass: buildDailyMetricSeries(filteredRecords, (recs) => {
       const sc = computeEfficiencyScorecard(recs);
       return sc.first_pass_rate;
     }),
-    failureRate: buildDailyMetricSeries(records, (recs) => {
+    failureRate: buildDailyMetricSeries(filteredRecords, (recs) => {
       const total = recs.length;
       const failed = recs.filter((r) => r.outcome === "failed").length;
       return total > 0 ? (failed / total) * 100 : 0;
@@ -1871,8 +1929,8 @@ ${
         .map(
           (inf) => `
 <div class="inflection-panel">
-  <div class="label">⚡ Inflection: ${escHtml(inf.stage)} — ${escHtml(inf.direction)} ${inf.pct_change}%</div>
-  <div style="color:var(--text-muted);font-size:0.85rem;margin-top:4px">7d avg: ${fmtNum(inf.avg_7d)} · 30d avg: ${fmtNum(inf.avg_30d)}${inf.attributions?.length > 0 ? ` · ${inf.attributions.map((a) => escHtml(a.description)).join("; ")}` : ""}</div>
+  <div class="label">⚡ Inflection: ${escHtml(inf.metric)} — ${escHtml(inf.direction)} ${round(inf.magnitude * 100, 1)}%</div>
+  <div style="color:var(--text-muted);font-size:0.85rem;margin-top:4px">7d avg: ${fmtNum(inf.avg_7d)} · 30d avg: ${fmtNum(inf.avg_30d)}${inf.context ? ` · ${escHtml(inf.context)}` : ""}${inf.llm_insight ? `<br/>💡 ${escHtml(inf.llm_insight)}` : ""}</div>
 </div>`,
         )
         .join("")
@@ -2192,7 +2250,7 @@ function runSlack() {
       .slice(0, 5)
       .map(
         (inf) =>
-          `>  • ⚡ ${inf.stage}: ${inf.direction} *${round(inf.pct_change, 1)}%* (7d avg crossed 30d avg)`,
+          `>  • ⚡ ${inf.metric}: ${inf.direction} *${round(inf.magnitude * 100, 1)}%* (7d avg crossed 30d avg)`,
       );
     sections.push(`*Trend Inflections*\n${inflectionLines.join("\n")}`);
   } else {

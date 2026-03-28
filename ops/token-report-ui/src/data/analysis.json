@@ -407,14 +407,32 @@
       "metric": "tokens_per_turn",
       "direction": "down",
       "magnitude": 0.15,
-      "context": "Switched to prompt caching strategy"
+      "context": "Switched to prompt caching strategy",
+      "avg_7d": 1200,
+      "avg_30d": 1412,
+      "attributions": [
+        {
+          "type": "ticket_mix",
+          "description": "Switched to prompt caching strategy"
+        }
+      ],
+      "llm_insight": null
     },
     {
       "date": "2026-03-12",
       "metric": "cache_efficiency",
       "direction": "up",
       "magnitude": 0.08,
-      "context": "Enabled extended cache TTL"
+      "context": "Enabled extended cache TTL",
+      "avg_7d": 78,
+      "avg_30d": 72,
+      "attributions": [
+        {
+          "type": "config_change",
+          "description": "Enabled extended cache TTL"
+        }
+      ],
+      "llm_insight": null
     }
   ],
   "outliers": [
