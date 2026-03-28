@@ -1,6 +1,7 @@
 /**
  * Section 4: Per-Ticket Cost Trend
  * Converted from design reference PerTicketCostTrend.jsx.
+ * Rebuilt from v5 per-ticket-cost-trend.jsx inline styles (SYMPH-198).
  */
 import type { PerTicketTrend } from "../types.ts";
 import ColdStartPlaceholder from "./ColdStartPlaceholder.tsx";
@@ -30,7 +31,16 @@ export default function PerTicketCostTrend({
           currentDays={dataSpanDays ?? 0}
         />
       ) : (
-        <div className="chart-container">
+        <div
+          style={{
+            background: "var(--bg-card)",
+            border: "1px solid var(--border)",
+            borderRadius: "6px",
+            padding: "16px",
+            marginBottom: "16px",
+            overflowX: "auto",
+          }}
+        >
           <div
             style={{
               marginBottom: "8px",

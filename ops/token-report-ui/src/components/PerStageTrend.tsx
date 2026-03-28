@@ -1,6 +1,7 @@
 /**
  * Section 3: Per-Stage Utilization Trend
  * Converted from design reference PerStageTrend.jsx.
+ * Rebuilt from v5 per-stage-utilization-trend.jsx inline styles (SYMPH-198).
  */
 import type { Inflection, StageTrend } from "../types.ts";
 import ColdStartPlaceholder from "./ColdStartPlaceholder.tsx";
@@ -42,7 +43,16 @@ export default function PerStageTrend({
           currentDays={dataSpanDays ?? 0}
         />
       ) : (
-        <div className="chart-container">
+        <div
+          style={{
+            background: "var(--bg-card)",
+            border: "1px solid var(--border)",
+            borderRadius: "6px",
+            padding: "16px",
+            marginBottom: "16px",
+            overflowX: "auto",
+          }}
+        >
           <MultiLineChart
             stageData={filteredTrend}
             configChanges={configChanges}
@@ -50,10 +60,22 @@ export default function PerStageTrend({
           {infl.length > 0 &&
             infl.map((inf) => (
               <div
-                className="inflection-panel"
                 key={`${inf.date}-${inf.metric}`}
+                style={{
+                  background: "rgba(210,153,34,0.1)",
+                  border: "1px solid var(--yellow)",
+                  borderRadius: "6px",
+                  padding: "12px 16px",
+                  marginBottom: "12px",
+                }}
               >
-                <div className="label">
+                <div
+                  style={{
+                    color: "var(--yellow)",
+                    fontWeight: 600,
+                    fontSize: "0.85rem",
+                  }}
+                >
                   {"\u26A1"} Inflection: {inf.metric ?? ""} &mdash;{" "}
                   {inf.direction ?? ""}{" "}
                   {inf.magnitude != null

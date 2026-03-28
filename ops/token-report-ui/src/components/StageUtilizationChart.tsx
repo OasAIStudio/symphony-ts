@@ -2,6 +2,7 @@
  * StageUtilizationChart — Stacked area/line chart with date X-axis.
  * Shows per-stage token utilization trend over time.
  * Converted from Paper design reference; pure SVG, no external charting libs.
+ * Inline styles aligned with v5 per-stage-utilization-trend.jsx (SYMPH-198).
  */
 import {
   CHART_TOKENS,

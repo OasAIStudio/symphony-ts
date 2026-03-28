@@ -3,6 +3,7 @@
  * Shows per-ticket token cost trend with horizontal reference lines
  * for median and mean values.
  * Converted from Paper design reference; pure SVG, no external charting libs.
+ * Inline styles aligned with v5 per-ticket-cost-trend.jsx (SYMPH-198).
  */
 import {
   CHART_TOKENS,
