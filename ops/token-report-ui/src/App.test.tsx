@@ -1,6 +1,7 @@
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import App from "./App.tsx";
+import { Sparkline } from "./components/chartUtils.tsx";
 import {
   EfficiencyScorecard,
   ExecutiveSummary,
@@ -16,6 +17,7 @@ import {
   StageEfficiency,
   StageUtilizationChart,
   TicketCostChart,
+  reportCSS,
 } from "./components/index.ts";
 import analysisData from "./data/analysis.json";
 import {
@@ -825,5 +827,164 @@ describe("TicketCostChart", () => {
     );
     expect(html).toContain("polyline");
     expect(html).toContain("med");
+  });
+});
+
+// ─── Sparkline fill prop tests ───
+
+describe("Sparkline fill prop", () => {
+  const sampleValues = [10, 20, 15, 25, 18];
+
+  it("renders without fill prop identically to legacy behavior (no gradient, no polygon)", () => {
+    const html = renderToString(
+      <Sparkline values={sampleValues} stroke="#58a6ff" />,
+    );
+    expect(html).toContain("polyline");
+    expect(html).not.toContain("linearGradient");
+    expect(html).not.toContain("polygon");
+    expect(html).not.toContain("<defs>");
+  });
+
+  it("renders gradient and polygon when fill prop is true", () => {
+    const html = renderToString(
+      <Sparkline values={sampleValues} stroke="#34D399" fill />,
+    );
+    expect(html).toContain("linearGradient");
+    expect(html).toContain("polygon");
+    expect(html).toContain("<defs>");
+    // Gradient should have two stops with correct opacities
+    expect(html).toContain('stop-opacity="0.2"');
+    expect(html).toContain('stop-opacity="0"');
+    // Stop color should match the stroke color
+    expect(html).toContain('stop-color="#34D399"');
+  });
+
+  it("uses unique gradient IDs for multiple sparklines", () => {
+    // Render both sparklines in the same React tree so useId() generates unique IDs
+    const html = renderToString(
+      <>
+        <Sparkline values={sampleValues} stroke="#58a6ff" fill />
+        <Sparkline values={sampleValues} stroke="#3fb950" fill />
+      </>,
+    );
+    // Extract all gradient IDs from the combined output
+    const matches = [...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]);
+    expect(matches.length).toBeGreaterThanOrEqual(2);
+    // First two gradient IDs should be different
+    expect(matches[0]).not.toBe(matches[1]);
+  });
+
+  it("gradient goes from 20% opacity at top to 0% at bottom", () => {
+    const html = renderToString(
+      <Sparkline values={sampleValues} stroke="#58a6ff" fill />,
+    );
+    // Vertical gradient: x1=0, y1=0, x2=0, y2=1
+    expect(html).toContain('x1="0"');
+    expect(html).toContain('y1="0"');
+    expect(html).toContain('x2="0"');
+    expect(html).toContain('y2="1"');
+    // First stop: 0% offset, 0.2 opacity
+    expect(html).toContain('offset="0%"');
+    expect(html).toContain('stop-opacity="0.2"');
+    // Second stop: 100% offset, 0 opacity
+    expect(html).toContain('offset="100%"');
+    expect(html).toContain('stop-opacity="0"');
+  });
+
+  it("still renders polyline stroke when fill is enabled", () => {
+    const html = renderToString(
+      <Sparkline values={sampleValues} stroke="#58a6ff" fill />,
+    );
+    expect(html).toContain("polyline");
+    expect(html).toContain('stroke="#58a6ff"');
+  });
+
+  it("handles empty values with fill prop gracefully", () => {
+    const html = renderToString(<Sparkline values={[]} fill />);
+    expect(html).not.toContain("linearGradient");
+    expect(html).not.toContain("polygon");
+  });
+});
+
+// ─── CSS custom properties from styles.json ───
+
+describe("reportCSS design tokens", () => {
+  it("contains existing dark-theme CSS vars", () => {
+    expect(reportCSS).toContain("--bg: #0d1117");
+    expect(reportCSS).toContain("--bg-card: #161b22");
+    expect(reportCSS).toContain("--border: #30363d");
+    expect(reportCSS).toContain("--text: #c9d1d9");
+    expect(reportCSS).toContain("--accent: #58a6ff");
+  });
+
+  it("contains styles.json color tokens as CSS custom properties", () => {
+    expect(reportCSS).toContain("--color-primary: #1E40AF");
+    expect(reportCSS).toContain("--color-secondary: #6366F1");
+    expect(reportCSS).toContain("--color-background: #F8FAFC");
+    expect(reportCSS).toContain("--color-surface: #FFFFFF");
+    expect(reportCSS).toContain("--color-text: #0F172A");
+    expect(reportCSS).toContain("--color-text-secondary: #64748B");
+    expect(reportCSS).toContain("--color-accent: #10B981");
+    expect(reportCSS).toContain("--color-danger: #EF4444");
+    expect(reportCSS).toContain("--color-border: #E2E8F0");
+  });
+
+  it("contains styles.json typography tokens as CSS custom properties", () => {
+    expect(reportCSS).toContain("--font-heading: 'Inter'");
+    expect(reportCSS).toContain("--font-body: 'Inter'");
+    expect(reportCSS).toContain("--font-size-heading: 28px");
+    expect(reportCSS).toContain("--font-size-subheading: 18px");
+    expect(reportCSS).toContain("--font-size-body: 14px");
+    expect(reportCSS).toContain("--font-size-caption: 12px");
+    expect(reportCSS).toContain("--font-weight-heading: 700");
+    expect(reportCSS).toContain("--font-weight-subheading: 600");
+    expect(reportCSS).toContain("--font-weight-body: 400");
+    expect(reportCSS).toContain("--line-height-heading: 1.2");
+    expect(reportCSS).toContain("--line-height-subheading: 1.4");
+    expect(reportCSS).toContain("--line-height-body: 1.5");
+  });
+
+  it("contains styles.json spacing tokens as CSS custom properties", () => {
+    expect(reportCSS).toContain("--spacing-section: 32px");
+    expect(reportCSS).toContain("--spacing-group: 16px");
+    expect(reportCSS).toContain("--spacing-element: 8px");
+  });
+
+  it("contains styles.json border tokens as CSS custom properties", () => {
+    expect(reportCSS).toContain("--border-radius: 8px");
+    expect(reportCSS).toContain("--border-color: #E2E8F0");
+    expect(reportCSS).toContain("--border-width: 1px");
+  });
+
+  it("uses exact hex values from styles.json (no approximations)", () => {
+    // Verify exact casing matches styles.json
+    expect(reportCSS).toContain("#1E40AF");
+    expect(reportCSS).toContain("#6366F1");
+    expect(reportCSS).toContain("#F8FAFC");
+    expect(reportCSS).toContain("#FFFFFF");
+    expect(reportCSS).toContain("#0F172A");
+    expect(reportCSS).toContain("#64748B");
+    expect(reportCSS).toContain("#10B981");
+    expect(reportCSS).toContain("#EF4444");
+    expect(reportCSS).toContain("#E2E8F0");
+  });
+});
+
+// ─── EfficiencyScorecard uses Sparkline with fill ───
+
+describe("EfficiencyScorecard sparkline fill", () => {
+  it("passes fill prop to Sparkline components", () => {
+    const html = renderToString(
+      <EfficiencyScorecard
+        scorecard={data.efficiency_scorecard}
+        series={{
+          cacheEff: [70, 72, 74, 73, 75],
+          outputRatio: [30, 32, 31, 33, 34],
+        }}
+      />,
+    );
+    // With fill enabled, sparklines should contain gradient elements
+    expect(html).toContain("linearGradient");
+    expect(html).toContain("polygon");
   });
 });

@@ -134,7 +134,7 @@ export default function EfficiencyScorecard({
             </span>
           )}
           <span className="metric-sparkline">
-            <Sparkline values={row.sparkline} stroke={row.stroke} />
+            <Sparkline values={row.sparkline} stroke={row.stroke} fill />
           </span>
         </div>
       ))}

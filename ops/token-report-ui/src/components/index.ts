@@ -47,6 +47,33 @@ export const reportCSS = `
   --red: #f85149;
   --yellow: #d29922;
   --purple: #bc8cff;
+  --color-primary: #1E40AF;
+  --color-secondary: #6366F1;
+  --color-background: #F8FAFC;
+  --color-surface: #FFFFFF;
+  --color-text: #0F172A;
+  --color-text-secondary: #64748B;
+  --color-accent: #10B981;
+  --color-danger: #EF4444;
+  --color-border: #E2E8F0;
+  --font-heading: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-size-heading: 28px;
+  --font-size-subheading: 18px;
+  --font-size-body: 14px;
+  --font-size-caption: 12px;
+  --font-weight-heading: 700;
+  --font-weight-subheading: 600;
+  --font-weight-body: 400;
+  --line-height-heading: 1.2;
+  --line-height-subheading: 1.4;
+  --line-height-body: 1.5;
+  --spacing-section: 32px;
+  --spacing-group: 16px;
+  --spacing-element: 8px;
+  --border-radius: 8px;
+  --border-color: #E2E8F0;
+  --border-width: 1px;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
