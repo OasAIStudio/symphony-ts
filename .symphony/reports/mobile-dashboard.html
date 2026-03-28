@@ -361,6 +361,193 @@ body {
 }
 .error-banner.visible { display: block; }
 
+/* ── Bottom Sheet ── */
+.bottom-sheet-overlay {
+  position: fixed; inset: 0; z-index: 90;
+  background: rgba(0,0,0,0.6);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+.bottom-sheet-overlay.visible { opacity: 1; pointer-events: auto; }
+.bottom-sheet {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 91;
+  background: var(--card);
+  border-radius: 16px 16px 0 0;
+  padding: 20px 16px calc(env(safe-area-inset-bottom) + 20px);
+  transform: translateY(100%);
+  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+  max-height: 85vh; overflow-y: auto;
+}
+.bottom-sheet.visible { transform: translateY(0); }
+.bottom-sheet-handle {
+  width: 36px; height: 4px; border-radius: 2px;
+  background: var(--line-strong); margin: 0 auto 16px;
+}
+.bottom-sheet-title {
+  font-size: 17px; font-weight: 700; margin-bottom: 4px;
+}
+.bottom-sheet-subtitle {
+  font-size: 13px; color: var(--muted); margin-bottom: 16px;
+}
+
+/* ── Stop Checklist ── */
+.stop-checklist { list-style: none; margin-bottom: 20px; }
+.stop-checklist-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.stop-checklist-item:last-child { border-bottom: none; }
+.stop-check-icon {
+  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700;
+  background: var(--page-soft); border: 1px solid var(--line);
+  color: var(--muted);
+}
+.stop-check-icon.pending { color: var(--muted); }
+.stop-check-icon.running { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); animation: pulse 1.5s infinite; }
+.stop-check-icon.success { background: var(--green-soft); border-color: var(--green); color: var(--green); }
+.stop-check-icon.failed { background: var(--red-soft); border-color: var(--red); color: var(--red); }
+.stop-step-label { flex: 1; }
+.stop-step-error {
+  font-size: 12px; color: var(--red); font-family: var(--font-mono);
+  margin-top: 4px; line-height: 1.3;
+}
+
+/* ── Queue Screen ── */
+.queue-section { margin-bottom: 20px; }
+.queue-section-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 0 8px; font-size: 13px; font-weight: 600;
+  color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px;
+}
+.queue-badge {
+  font-size: 11px; font-weight: 700; padding: 1px 7px;
+  border-radius: 99px; font-family: var(--font-mono);
+}
+.queue-badge-alert { background: var(--red-soft); color: var(--red); }
+.queue-badge-queued { background: var(--yellow-soft); color: var(--yellow); }
+.queue-badge-merged { background: var(--green-soft); color: var(--green); }
+.queue-badge-rejected { background: var(--red-soft); color: var(--red); }
+.queue-card {
+  background: var(--card); border-radius: var(--radius);
+  padding: 12px 16px; margin-bottom: 8px;
+  border: 1px solid var(--line);
+}
+.queue-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.queue-pr-number {
+  font-family: var(--font-mono); font-size: 13px; font-weight: 600;
+  color: var(--accent-ink);
+}
+.queue-pr-status {
+  font-size: 11px; font-weight: 600; padding: 2px 8px;
+  border-radius: 99px; text-transform: uppercase; letter-spacing: 0.3px;
+}
+.queue-status-queued { background: var(--yellow-soft); color: var(--yellow); }
+.queue-status-merged { background: var(--green-soft); color: var(--green); }
+.queue-status-rejected { background: var(--red-soft); color: var(--red); }
+.queue-status-alert { background: var(--red-soft); color: var(--red); }
+.queue-pr-title { font-size: 14px; font-weight: 500; line-height: 1.4; }
+.queue-pr-meta {
+  display: flex; gap: 12px; margin-top: 6px; font-size: 12px;
+  color: var(--muted); font-family: var(--font-mono);
+}
+.queue-alert-card {
+  background: var(--red-soft); border: 1px solid rgba(248, 113, 113, 0.25);
+  border-radius: var(--radius); padding: 12px 16px; margin-bottom: 8px;
+}
+.queue-alert-msg { font-size: 13px; color: var(--red); line-height: 1.4; }
+.queue-alert-time { font-size: 11px; color: var(--muted); margin-top: 4px; font-family: var(--font-mono); }
+.queue-refresh-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 0; margin-bottom: 8px; font-size: 12px; color: var(--muted);
+}
+.queue-refresh-btn {
+  background: none; border: 1px solid var(--line); color: var(--ink-secondary);
+  padding: 4px 12px; border-radius: var(--radius-sm); font-size: 12px;
+  cursor: pointer; font-family: var(--font-sans);
+}
+.queue-refresh-btn:active { background: var(--page-soft); }
+
+/* ── Deploy Screen ── */
+.deploy-preview { padding-bottom: 16px; }
+.deploy-version-row {
+  display: flex; gap: 8px; margin-bottom: 12px;
+}
+.deploy-version-card {
+  flex: 1; background: var(--page-soft); border-radius: var(--radius-sm);
+  padding: 12px; border: 1px solid var(--line); text-align: center;
+}
+.deploy-version-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+.deploy-version-value { font-size: 16px; font-weight: 700; font-family: var(--font-mono); letter-spacing: -0.3px; }
+.deploy-arrow { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 18px; padding: 0 4px; }
+.deploy-warning {
+  background: var(--yellow-soft); border: 1px solid rgba(251, 191, 36, 0.25);
+  border-radius: var(--radius-sm); padding: 10px 14px; margin-bottom: 12px;
+  font-size: 13px; color: var(--yellow); display: flex; align-items: center; gap: 8px;
+}
+.deploy-warning-icon { font-size: 18px; flex-shrink: 0; }
+.deploy-commits-card {
+  background: var(--card); border-radius: var(--radius); border: 1px solid var(--line);
+  margin-bottom: 12px; overflow: hidden;
+}
+.deploy-commits-header {
+  padding: 10px 16px; font-size: 13px; font-weight: 600;
+  color: var(--muted); border-bottom: 1px solid var(--line);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.deploy-commit-item {
+  padding: 8px 16px; border-bottom: 1px solid var(--line);
+  font-size: 13px; font-family: var(--font-mono);
+}
+.deploy-commit-item:last-child { border-bottom: none; }
+.deploy-commit-sha { color: var(--accent-ink); font-weight: 500; }
+.deploy-commit-msg { color: var(--ink-secondary); margin-left: 8px; }
+.deploy-actions-card {
+  background: var(--card); border-radius: var(--radius); border: 1px solid var(--line);
+  margin-bottom: 16px; overflow: hidden;
+}
+.deploy-actions-header {
+  padding: 10px 16px; font-size: 13px; font-weight: 600;
+  color: var(--muted); border-bottom: 1px solid var(--line);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.deploy-action-item {
+  padding: 8px 16px; border-bottom: 1px solid var(--line);
+  font-size: 13px; display: flex; align-items: center; gap: 8px;
+}
+.deploy-action-item:last-child { border-bottom: none; }
+.deploy-action-icon { color: var(--accent-ink); }
+.deploy-output {
+  background: #0d0d10; border-radius: var(--radius);
+  border: 1px solid var(--line); padding: 12px;
+  font-family: var(--font-mono); font-size: 12px;
+  line-height: 1.6; color: var(--ink-secondary);
+  max-height: 300px; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-all;
+  display: none;
+}
+.deploy-output.visible { display: block; }
+.deploy-output .line-success { color: var(--green); }
+.deploy-output .line-error { color: var(--red); }
+.deploy-output .line-info { color: var(--accent-ink); }
+.deploy-status-banner {
+  border-radius: var(--radius-sm); padding: 12px 16px; margin-top: 12px;
+  font-size: 14px; font-weight: 600; text-align: center; display: none;
+}
+.deploy-status-banner.visible { display: block; }
+.deploy-status-banner.success { background: var(--green-soft); color: var(--green); border: 1px solid rgba(74, 222, 128, 0.25); }
+.deploy-status-banner.failure { background: var(--red-soft); color: var(--red); border: 1px solid rgba(248, 113, 113, 0.25); }
+.hold-btn.deploy-btn {
+  background: var(--accent-soft); border-color: rgba(94, 106, 210, 0.3);
+  color: var(--accent-ink);
+}
+.hold-btn.deploy-btn .hold-fill { background: rgba(94, 106, 210, 0.15); }
+.hold-btn:disabled {
+  opacity: 0.4; cursor: not-allowed;
+}
+
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -425,6 +612,26 @@ body {
   <!-- Issue Detail Screen -->
   <div class="screen" id="screen-detail"></div>
 
+  <!-- Queue Screen -->
+  <div class="screen" id="screen-queue">
+    <div class="screen-content" id="queue-content">
+      <div class="empty-state">
+        <div class="empty-state-icon">⏳</div>
+        <div class="empty-state-text">Loading queue…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Deploy Screen -->
+  <div class="screen" id="screen-deploy">
+    <div class="screen-content" id="deploy-content">
+      <div class="empty-state">
+        <div class="empty-state-icon">🚀</div>
+        <div class="empty-state-text">Loading deploy preview…</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Reports Screen -->
   <div class="screen" id="screen-reports">
     <div class="screen-content" id="reports-content">
@@ -435,11 +642,33 @@ body {
     </div>
   </div>
 
+  <!-- Stop Bottom Sheet -->
+  <div class="bottom-sheet-overlay" id="stop-sheet-overlay"></div>
+  <div class="bottom-sheet" id="stop-sheet">
+    <div class="bottom-sheet-handle"></div>
+    <div class="bottom-sheet-title" id="stop-sheet-title">Stop Issue</div>
+    <div class="bottom-sheet-subtitle" id="stop-sheet-subtitle"></div>
+    <ul class="stop-checklist" id="stop-checklist"></ul>
+    <div id="stop-sheet-error" class="error-banner" style="margin:0 0 12px"></div>
+    <button class="hold-btn" id="stop-sheet-btn">
+      <span class="hold-fill"></span>
+      <span class="hold-btn-text">Hold to Confirm Stop</span>
+    </button>
+  </div>
+
   <!-- Tab Bar -->
   <nav class="tab-bar">
     <button class="tab-item active" data-tab="pipeline">
       <span class="tab-icon">▶</span>
       Pipeline
+    </button>
+    <button class="tab-item" data-tab="queue">
+      <span class="tab-icon">⏳</span>
+      Queue
+    </button>
+    <button class="tab-item" data-tab="deploy">
+      <span class="tab-icon">🚀</span>
+      Deploy
     </button>
     <button class="tab-item" data-tab="reports">
       <span class="tab-icon">📊</span>
@@ -599,21 +828,24 @@ body {
     currentScreen = screen;
     selectedIssueId = issueId || null;
 
-    if (screen === 'pipeline') {
-      $('#screen-pipeline').classList.add('active');
-      $(`.tab-item[data-tab="pipeline"]`).classList.add('active');
-      $('#header-back').classList.remove('visible');
-      $('#header-title').textContent = 'Pipeline';
-    } else if (screen === 'detail') {
+    const titles = { pipeline: 'Pipeline', queue: 'Queue', deploy: 'Deploy', reports: 'Reports' };
+
+    if (screen === 'detail') {
       $('#screen-detail').classList.add('active');
       $('#header-back').classList.add('visible');
       $('#header-title').textContent = issueId || 'Issue';
       renderDetail(issueId);
-    } else if (screen === 'reports') {
-      $('#screen-reports').classList.add('active');
-      $(`.tab-item[data-tab="reports"]`).classList.add('active');
+    } else {
+      const screenEl = $(`#screen-${screen}`);
+      if (screenEl) screenEl.classList.add('active');
+      const tabEl = $(`.tab-item[data-tab="${screen}"]`);
+      if (tabEl) tabEl.classList.add('active');
       $('#header-back').classList.remove('visible');
-      $('#header-title').textContent = 'Reports';
+      $('#header-title').textContent = titles[screen] || screen;
+
+      // Trigger data loading on tab switch
+      if (screen === 'queue') loadQueue();
+      if (screen === 'deploy') loadDeployPreview();
     }
   }
 
@@ -780,16 +1012,16 @@ body {
       <div style="padding:0 16px 24px">
         <button class="hold-btn" id="stop-btn" data-issue="${esc(issue.issue_identifier)}">
           <span class="hold-fill"></span>
-          <span class="hold-btn-text">Hold to Stop Issue</span>
+          <span class="hold-btn-text">Stop Issue…</span>
         </button>
       </div>
     `;
 
-    // Wire up hold-to-confirm stop
+    // Wire stop button to open bottom sheet
     const stopBtn = $('#stop-btn');
     if (stopBtn) {
-      wireHoldToConfirm(stopBtn, () => {
-        stopIssue(issue.issue_identifier);
+      stopBtn.addEventListener('click', () => {
+        openStopSheet(issue.issue_identifier, issue.issue_title);
       });
     }
   }
@@ -986,19 +1218,444 @@ body {
     btn.addEventListener('touchcancel', cancel);
   }
 
-  async function stopIssue(issueIdentifier) {
+  // ── Stop Bottom Sheet ──
+  const STOP_STEPS = [
+    { id: 'signal', label: 'Send stop signal to agent' },
+    { id: 'cancel', label: 'Cancel pending operations' },
+    { id: 'cleanup', label: 'Run cleanup handlers' },
+    { id: 'status', label: 'Update issue status' },
+  ];
+
+  let stopSheetIssue = null;
+
+  function openStopSheet(issueIdentifier, issueTitle) {
+    stopSheetIssue = issueIdentifier;
+    $('#stop-sheet-title').textContent = `Stop ${issueIdentifier}`;
+    $('#stop-sheet-subtitle').textContent = issueTitle || '';
+    $('#stop-sheet-error').classList.remove('visible');
+    $('#stop-sheet-error').textContent = '';
+
+    // Reset checklist
+    const checklist = $('#stop-checklist');
+    checklist.innerHTML = STOP_STEPS.map(step => `
+      <li class="stop-checklist-item" data-step="${step.id}">
+        <span class="stop-check-icon pending">○</span>
+        <span class="stop-step-label">${esc(step.label)}</span>
+      </li>
+    `).join('');
+
+    // Enable confirm button
+    const btn = $('#stop-sheet-btn');
+    btn.disabled = false;
+    btn.classList.remove('holding');
+
+    // Show sheet
+    $('#stop-sheet-overlay').classList.add('visible');
+    $('#stop-sheet').classList.add('visible');
+  }
+
+  function closeStopSheet() {
+    $('#stop-sheet-overlay').classList.remove('visible');
+    $('#stop-sheet').classList.remove('visible');
+    stopSheetIssue = null;
+  }
+
+  $('#stop-sheet-overlay').addEventListener('click', closeStopSheet);
+
+  // Wire hold-to-confirm on stop sheet button
+  wireHoldToConfirm($('#stop-sheet-btn'), async () => {
+    if (!stopSheetIssue) return;
+    const issueIdentifier = stopSheetIssue;
+    const btn = $('#stop-sheet-btn');
+    btn.disabled = true;
+
+    // Mark all steps as running
+    STOP_STEPS.forEach(step => {
+      updateStopStep(step.id, 'running', '⟳');
+    });
+
     try {
       const resp = await fetch(`${baseUrl}/api/v1/${encodeURIComponent(issueIdentifier)}/stop`, {
         method: 'POST',
       });
       const data = await resp.json();
+
       if (data.stopped) {
-        showError(`Stopped ${issueIdentifier}: ${data.reason}`);
+        // Update checklist with per-step results if available
+        if (data.steps && Array.isArray(data.steps)) {
+          data.steps.forEach(step => {
+            updateStopStep(step.id, step.success ? 'success' : 'failed', step.success ? '✓' : '✗');
+            if (!step.success && step.error) {
+              appendStopStepError(step.id, step.error);
+            }
+          });
+          // Mark any remaining steps as success
+          STOP_STEPS.forEach(step => {
+            const icon = $(`#stop-checklist .stop-checklist-item[data-step="${step.id}"] .stop-check-icon`);
+            if (icon && icon.classList.contains('running')) {
+              updateStopStep(step.id, 'success', '✓');
+            }
+          });
+        } else {
+          // No per-step data — mark all as success
+          STOP_STEPS.forEach(step => updateStopStep(step.id, 'success', '✓'));
+        }
       } else {
-        showError(`Failed to stop: ${data.reason || 'Unknown error'}`);
+        // Failed — mark all as failed, show error. Never auto-retry.
+        STOP_STEPS.forEach(step => updateStopStep(step.id, 'failed', '✗'));
+        const errEl = $('#stop-sheet-error');
+        errEl.textContent = data.reason || 'Stop failed — no details provided';
+        errEl.classList.add('visible');
       }
     } catch (err) {
-      showError(`Stop failed: ${err.message}`);
+      STOP_STEPS.forEach(step => updateStopStep(step.id, 'failed', '✗'));
+      const errEl = $('#stop-sheet-error');
+      errEl.textContent = `Stop failed: ${err.message}`;
+      errEl.classList.add('visible');
+    }
+  });
+
+  function updateStopStep(stepId, status, icon) {
+    const item = $(`#stop-checklist .stop-checklist-item[data-step="${stepId}"]`);
+    if (!item) return;
+    const iconEl = item.querySelector('.stop-check-icon');
+    if (iconEl) {
+      iconEl.className = `stop-check-icon ${status}`;
+      iconEl.textContent = icon;
+    }
+  }
+
+  function appendStopStepError(stepId, errorMsg) {
+    const item = $(`#stop-checklist .stop-checklist-item[data-step="${stepId}"]`);
+    if (!item) return;
+    const existing = item.querySelector('.stop-step-error');
+    if (existing) { existing.textContent = errorMsg; return; }
+    const errDiv = document.createElement('div');
+    errDiv.className = 'stop-step-error';
+    errDiv.textContent = errorMsg;
+    item.querySelector('.stop-step-label').appendChild(errDiv);
+  }
+
+  // ── Queue Screen ──
+  let queueCache = null;
+  let queueLastFetch = 0;
+
+  async function loadQueue() {
+    const container = $('#queue-content');
+
+    // TODO: Backend endpoint GET /api/v1/queue not yet implemented (separate task)
+    try {
+      const resp = await fetch(`${baseUrl}/api/v1/queue`);
+      if (!resp.ok) {
+        if (resp.status === 404) {
+          container.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-state-icon">⏳</div>
+              <div class="empty-state-text">Queue endpoint not available</div>
+            </div>`;
+          return;
+        }
+        throw new Error(`HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+      queueCache = data;
+      queueLastFetch = Date.now();
+      renderQueue(data);
+    } catch (err) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">⏳</div>
+          <div class="empty-state-text">Queue unavailable: ${esc(err.message)}</div>
+        </div>`;
+    }
+  }
+
+  function renderQueue(data) {
+    const container = $('#queue-content');
+    const alerts = data.alerts || [];
+    const queued = data.in_queue || [];
+    const merged = data.merged || [];
+    const rejected = data.rejected || [];
+
+    let html = `
+      <div class="queue-refresh-bar">
+        <span>Updated ${new Date().toLocaleTimeString()}</span>
+        <button class="queue-refresh-btn" id="queue-refresh-btn">Refresh</button>
+      </div>`;
+
+    // Alerts section
+    if (alerts.length > 0) {
+      html += `<div class="queue-section">
+        <div class="queue-section-header">Alerts <span class="queue-badge queue-badge-alert">${alerts.length}</span></div>`;
+      for (const alert of alerts) {
+        html += `
+          <div class="queue-alert-card">
+            <div class="queue-alert-msg">${esc(alert.message || alert.title)}</div>
+            ${alert.timestamp ? `<div class="queue-alert-time">${esc(fmtTime(alert.timestamp))}</div>` : ''}
+          </div>`;
+      }
+      html += `</div>`;
+    }
+
+    // In Queue section
+    if (queued.length > 0) {
+      html += `<div class="queue-section">
+        <div class="queue-section-header">In Queue <span class="queue-badge queue-badge-queued">${queued.length}</span></div>`;
+      for (const pr of queued) {
+        html += renderQueueCard(pr, 'queued');
+      }
+      html += `</div>`;
+    }
+
+    // Merged section
+    if (merged.length > 0) {
+      html += `<div class="queue-section">
+        <div class="queue-section-header">Merged <span class="queue-badge queue-badge-merged">${merged.length}</span></div>`;
+      for (const pr of merged) {
+        html += renderQueueCard(pr, 'merged');
+      }
+      html += `</div>`;
+    }
+
+    // Rejected section
+    if (rejected.length > 0) {
+      html += `<div class="queue-section">
+        <div class="queue-section-header">Rejected <span class="queue-badge queue-badge-rejected">${rejected.length}</span></div>`;
+      for (const pr of rejected) {
+        html += renderQueueCard(pr, 'rejected');
+      }
+      html += `</div>`;
+    }
+
+    // Empty state
+    if (alerts.length === 0 && queued.length === 0 && merged.length === 0 && rejected.length === 0) {
+      html += `
+        <div class="empty-state">
+          <div class="empty-state-icon">✓</div>
+          <div class="empty-state-text">No items in merge queue</div>
+        </div>`;
+    }
+
+    container.innerHTML = html;
+
+    // Wire refresh button
+    const refreshBtn = $('#queue-refresh-btn');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', loadQueue);
+    }
+  }
+
+  function renderQueueCard(pr, status) {
+    return `
+      <div class="queue-card">
+        <div class="queue-card-header">
+          <span class="queue-pr-number">#${esc(String(pr.number || pr.pr_number || ''))}</span>
+          <span class="queue-pr-status queue-status-${status}">${esc(status)}</span>
+        </div>
+        <div class="queue-pr-title">${esc(pr.title)}</div>
+        <div class="queue-pr-meta">
+          ${pr.author ? `<span>${esc(pr.author)}</span>` : ''}
+          ${pr.updated_at ? `<span>${esc(fmtTime(pr.updated_at))}</span>` : ''}
+          ${pr.head_branch ? `<span>${esc(pr.head_branch)}</span>` : ''}
+        </div>
+      </div>`;
+  }
+
+  // ── Deploy Screen ──
+  let deployPreview = null;
+  let deployEventSource = null;
+  let deployInProgress = false;
+
+  async function loadDeployPreview() {
+    const container = $('#deploy-content');
+
+    // TODO: Backend endpoint POST /api/v1/deploy/preview not yet implemented (separate task)
+    try {
+      const resp = await fetch(`${baseUrl}/api/v1/deploy/preview`, {
+        method: 'POST',
+      });
+      if (!resp.ok) {
+        if (resp.status === 404) {
+          container.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-state-icon">🚀</div>
+              <div class="empty-state-text">Deploy endpoint not available</div>
+            </div>`;
+          return;
+        }
+        throw new Error(`HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+      deployPreview = data;
+      renderDeployPreview(data);
+    } catch (err) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">🚀</div>
+          <div class="empty-state-text">Deploy unavailable: ${esc(err.message)}</div>
+        </div>`;
+    }
+  }
+
+  function renderDeployPreview(data) {
+    const container = $('#deploy-content');
+    const hasRunningIssues = data.running_issues_count && data.running_issues_count > 0;
+
+    let html = `<div class="deploy-preview">`;
+
+    // Version cards
+    html += `
+      <div class="deploy-version-row">
+        <div class="deploy-version-card">
+          <div class="deploy-version-label">Current</div>
+          <div class="deploy-version-value">${esc(data.current_version || '—')}</div>
+        </div>
+        <div class="deploy-arrow">→</div>
+        <div class="deploy-version-card">
+          <div class="deploy-version-label">Target</div>
+          <div class="deploy-version-value">${esc(data.target_version || '—')}</div>
+        </div>
+      </div>`;
+
+    // Running issues warning
+    if (hasRunningIssues) {
+      html += `
+        <div class="deploy-warning">
+          <span class="deploy-warning-icon">⚠</span>
+          <span>${data.running_issues_count} issue${data.running_issues_count > 1 ? 's' : ''} currently running. Deploy may affect active pipelines.</span>
+        </div>`;
+    }
+
+    // Commits ahead
+    const commits = data.commits || [];
+    if (commits.length > 0 || data.commits_ahead) {
+      html += `
+        <div class="deploy-commits-card">
+          <div class="deploy-commits-header">Incoming Commits (${data.commits_ahead || commits.length})</div>`;
+      for (const commit of commits) {
+        html += `
+          <div class="deploy-commit-item">
+            <span class="deploy-commit-sha">${esc((commit.sha || '').substring(0, 7))}</span>
+            <span class="deploy-commit-msg">${esc(commit.message || commit.title || '')}</span>
+          </div>`;
+      }
+      html += `</div>`;
+    }
+
+    // Actions
+    const actions = data.actions || [];
+    if (actions.length > 0) {
+      html += `
+        <div class="deploy-actions-card">
+          <div class="deploy-actions-header">Deploy Actions</div>`;
+      for (const action of actions) {
+        html += `
+          <div class="deploy-action-item">
+            <span class="deploy-action-icon">▸</span>
+            <span>${esc(typeof action === 'string' ? action : action.description || action.name || JSON.stringify(action))}</span>
+          </div>`;
+      }
+      html += `</div>`;
+    }
+
+    html += `</div>`;
+
+    // Deploy button (hold-to-confirm)
+    html += `
+      <button class="hold-btn deploy-btn" id="deploy-btn" ${deployInProgress ? 'disabled' : ''}>
+        <span class="hold-fill"></span>
+        <span class="hold-btn-text">Hold to Deploy</span>
+      </button>
+      <div class="deploy-output" id="deploy-output"></div>
+      <div class="deploy-status-banner" id="deploy-status"></div>
+    `;
+
+    container.innerHTML = html;
+
+    // Wire hold-to-confirm on deploy button
+    const deployBtn = $('#deploy-btn');
+    if (deployBtn && !deployInProgress) {
+      wireHoldToConfirm(deployBtn, () => {
+        startDeploy();
+      });
+    }
+  }
+
+  async function startDeploy() {
+    if (deployInProgress) return;
+    // Never deploy without showing the dry-run preview first
+    if (!deployPreview) {
+      showError('Cannot deploy: preview has not loaded yet');
+      return;
+    }
+
+    deployInProgress = true;
+    const btn = $('#deploy-btn');
+    if (btn) btn.disabled = true;
+
+    const outputEl = $('#deploy-output');
+    const statusEl = $('#deploy-status');
+    outputEl.textContent = '';
+    outputEl.classList.add('visible');
+    statusEl.classList.remove('visible', 'success', 'failure');
+
+    // TODO: Backend endpoint POST /api/v1/deploy (SSE stream) not yet implemented (separate task)
+    try {
+      deployEventSource = new EventSource(`${baseUrl}/api/v1/deploy/stream`);
+
+      deployEventSource.addEventListener('deploy_output', (e) => {
+        try {
+          const payload = JSON.parse(e.data);
+          const line = document.createElement('div');
+          if (payload.level === 'error') line.className = 'line-error';
+          else if (payload.level === 'success') line.className = 'line-success';
+          else if (payload.level === 'info') line.className = 'line-info';
+          line.textContent = payload.text || payload.message || e.data;
+          outputEl.appendChild(line);
+          outputEl.scrollTop = outputEl.scrollHeight;
+        } catch (_) {
+          outputEl.textContent += e.data + '\n';
+          outputEl.scrollTop = outputEl.scrollHeight;
+        }
+      });
+
+      deployEventSource.addEventListener('deploy_complete', (e) => {
+        try {
+          const payload = JSON.parse(e.data);
+          const success = payload.success !== false && payload.status !== 'failure';
+          statusEl.textContent = success ? '✓ Deploy Successful' : '✗ Deploy Failed';
+          statusEl.className = `deploy-status-banner visible ${success ? 'success' : 'failure'}`;
+          if (payload.message) {
+            statusEl.textContent += ` — ${payload.message}`;
+          }
+        } catch (_) {
+          statusEl.textContent = '✓ Deploy Complete';
+          statusEl.className = 'deploy-status-banner visible success';
+        }
+        if (deployEventSource) { deployEventSource.close(); deployEventSource = null; }
+        deployInProgress = false;
+        const btn2 = $('#deploy-btn');
+        if (btn2) btn2.disabled = false;
+      });
+
+      deployEventSource.onerror = () => {
+        if (deployEventSource) {
+          deployEventSource.close();
+          deployEventSource = null;
+        }
+        if (deployInProgress) {
+          statusEl.textContent = '✗ Deploy stream disconnected';
+          statusEl.className = 'deploy-status-banner visible failure';
+          deployInProgress = false;
+          const btn2 = $('#deploy-btn');
+          if (btn2) btn2.disabled = false;
+        }
+      };
+    } catch (err) {
+      statusEl.textContent = `✗ Deploy failed: ${err.message}`;
+      statusEl.className = 'deploy-status-banner visible failure';
+      deployInProgress = false;
+      if (btn) btn.disabled = false;
     }
   }
 

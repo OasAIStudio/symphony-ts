@@ -112,16 +112,92 @@ describe("mobile-dashboard.html", () => {
     expect(scriptSection).toContain("${baseUrl}/api/v1/events");
   });
 
-  it("never auto-retries a failed stop action", () => {
-    // The stop function should not contain retry logic
+  it("includes 4-tab navigation bar (pipeline, queue, deploy, reports)", () => {
+    expect(html).toContain('data-tab="pipeline"');
+    expect(html).toContain('data-tab="queue"');
+    expect(html).toContain('data-tab="deploy"');
+    expect(html).toContain('data-tab="reports"');
+    expect(html).toContain("tab-bar");
+  });
+
+  it("includes queue screen with sections for alerts, in-queue, merged, rejected", () => {
+    expect(html).toContain("screen-queue");
+    expect(html).toContain("queue-content");
+    expect(html).toContain("queue-badge-alert");
+    expect(html).toContain("queue-badge-queued");
+    expect(html).toContain("queue-badge-merged");
+    expect(html).toContain("queue-badge-rejected");
+  });
+
+  it("fetches queue data from /api/v1/queue", () => {
     const scriptSection = html.slice(html.indexOf("<script>"));
-    // No retry/loop around stop
+    expect(scriptSection).toContain("/api/v1/queue");
+  });
+
+  it("includes deploy screen with preview, version display, and output", () => {
+    expect(html).toContain("screen-deploy");
+    expect(html).toContain("deploy-content");
+    expect(html).toContain("deploy-version-card");
+    expect(html).toContain("deploy-output");
+    expect(html).toContain("deploy-status-banner");
+  });
+
+  it("fetches deploy preview from POST /api/v1/deploy/preview", () => {
+    const scriptSection = html.slice(html.indexOf("<script>"));
+    expect(scriptSection).toContain("/api/v1/deploy/preview");
+    expect(scriptSection).toContain("method: 'POST'");
+  });
+
+  it("shows warning when issues are running during deploy", () => {
+    expect(html).toContain("deploy-warning");
+    expect(html).toContain("running_issues_count");
+  });
+
+  it("streams deploy output via SSE with deploy_output events", () => {
+    const scriptSection = html.slice(html.indexOf("<script>"));
+    expect(scriptSection).toContain("deploy_output");
+    expect(scriptSection).toContain("deploy_complete");
+    expect(scriptSection).toContain("/api/v1/deploy/stream");
+  });
+
+  it("includes stop confirmation bottom sheet", () => {
+    expect(html).toContain("stop-sheet");
+    expect(html).toContain("bottom-sheet");
+    expect(html).toContain("stop-checklist");
+    expect(html).toContain("stop-sheet-btn");
+  });
+
+  it("stop bottom sheet uses hold-to-confirm pattern", () => {
+    expect(html).toContain("Hold to Confirm Stop");
+    expect(html).toContain("wireHoldToConfirm");
+  });
+
+  it("stop bottom sheet shows per-step success/failure", () => {
+    const scriptSection = html.slice(html.indexOf("<script>"));
+    expect(scriptSection).toContain("stop-check-icon");
+    expect(scriptSection).toContain("success");
+    expect(scriptSection).toContain("failed");
+    // Per-step results from stop endpoint
+    expect(scriptSection).toContain("data.steps");
+  });
+
+  it("deploy uses hold-to-confirm pattern", () => {
+    expect(html).toContain("deploy-btn");
+    expect(html).toContain("Hold to Deploy");
+  });
+
+  it("never deploys without showing preview first", () => {
+    const scriptSection = html.slice(html.indexOf("<script>"));
+    expect(scriptSection).toContain("preview has not loaded");
+  });
+
+  it("never auto-retries a failed stop action", () => {
+    const scriptSection = html.slice(html.indexOf("<script>"));
     expect(scriptSection).not.toMatch(/stopIssue.*retry/i);
   });
 
-  it("includes tab navigation for pipeline and reports", () => {
-    expect(html).toContain('data-tab="pipeline"');
-    expect(html).toContain('data-tab="reports"');
-    expect(html).toContain("tab-bar");
+  it("handles queue/deploy 404 gracefully", () => {
+    const scriptSection = html.slice(html.indexOf("<script>"));
+    expect(scriptSection).toContain("resp.status === 404");
   });
 });
