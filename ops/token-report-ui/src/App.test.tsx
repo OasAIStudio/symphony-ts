@@ -145,6 +145,58 @@ describe("ExecutiveSummary", () => {
   });
 });
 
+// ─── SYMPH-190: Formula verification tests ───
+
+describe("SYMPH-190 formula verification", () => {
+  it("fixture has wow_delta_pct on total_tokens", () => {
+    expect(analysisData.executive_summary.total_tokens).toHaveProperty(
+      "wow_delta_pct",
+    );
+    expect(analysisData.executive_summary.total_tokens.wow_delta_pct).toBe(
+      12.3,
+    );
+  });
+
+  it("fixture has wow_delta_pct on per_ticket_trend", () => {
+    expect(analysisData.per_ticket_trend).toHaveProperty("wow_delta_pct");
+    expect(
+      (analysisData.per_ticket_trend as { wow_delta_pct: number })
+        .wow_delta_pct,
+    ).toBe(-5.2);
+  });
+
+  it("cache delta formula: (current - trend_7d) * 100 = 4pp", () => {
+    const sc = data.efficiency_scorecard;
+    const expected = Math.round(
+      (sc.cache_efficiency.current - sc.cache_efficiency.trend_7d) * 100,
+    );
+    expect(expected).toBe(4);
+    // Verify rendered output contains the delta badge
+    const html = renderToString(<App />);
+    expect(html).toContain("4<!-- -->% WoW");
+  });
+
+  it("token delta: wires wow_delta_pct from fixture into WoW badge", () => {
+    const html = renderToString(<App />);
+    // total_tokens.wow_delta_pct = 12.3 → "+12.3% WoW"
+    expect(html).toContain("12.3<!-- -->% WoW");
+  });
+
+  it("per-ticket WoW delta: wires wow_delta_pct from fixture into WoW badge", () => {
+    const html = renderToString(<App />);
+    // per_ticket_trend.wow_delta_pct = -5.2 → "-5.2% WoW"
+    expect(html).toContain("-5.2<!-- -->% WoW");
+  });
+
+  it("per_ticket_series exists on fixture for chart rendering", () => {
+    expect(analysisData).toHaveProperty("per_ticket_series");
+    expect(Array.isArray(analysisData.per_ticket_series)).toBe(true);
+    expect((analysisData.per_ticket_series as number[]).length).toBeGreaterThan(
+      0,
+    );
+  });
+});
+
 describe("EfficiencyScorecard", () => {
   it("renders 5 metric rows (failure rate moved to PipelineHealth)", () => {
     const html = renderToString(
