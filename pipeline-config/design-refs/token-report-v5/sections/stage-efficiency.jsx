@@ -1,21 +1,20 @@
 /**
- * Section 7: Stage Efficiency
- * Converted from design reference stage-efficiency.jsx (v5).
+ * Section 7: Stage Efficiency — v5 design reference
+ * Source of truth for inline styles. Mechanically convert to TypeScript.
+ *
+ * Props:
+ *   - perStageSpend: object keyed by stage name → { total_tokens, count, completed, failed }
+ *   - stageSparklines: object keyed by stage name → number[] (30d daily values)
+ *   - failureRateCurrent: object keyed by stage name → number (0–1)
  */
-import type { FailureRatePeriod, StageSpend } from "../types.ts";
-import { Sparkline, fmtNum } from "./chartUtils.tsx";
-
-export interface StageEfficiencyProps {
-  perStageSpend: Record<string, StageSpend>;
-  stageSparklines?: Record<string, number[]>;
-  failureRateCurrent?: FailureRatePeriod;
-}
+import React from "react";
+import { fmtNum, Sparkline } from "./chartUtils.jsx";
 
 export default function StageEfficiency({
   perStageSpend,
   stageSparklines,
   failureRateCurrent,
-}: StageEfficiencyProps) {
+}) {
   const spend = perStageSpend ?? {};
   const sparklines = stageSparklines ?? {};
   const failRates = failureRateCurrent ?? {};
@@ -26,7 +25,7 @@ export default function StageEfficiency({
         style={{
           fontFamily: "var(--font-heading)",
           fontSize: "var(--font-size-subheading)",
-          fontWeight: "var(--font-weight-subheading)" as unknown as number,
+          fontWeight: "var(--font-weight-subheading)",
           lineHeight: "var(--line-height-heading)",
           color: "var(--color-text)",
           margin: 0,
@@ -62,8 +61,7 @@ export default function StageEfficiency({
               <span
                 style={{
                   color: "var(--color-text)",
-                  fontWeight:
-                    "var(--font-weight-subheading)" as unknown as number,
+                  fontWeight: "var(--font-weight-subheading)",
                   fontFamily: "var(--font-heading)",
                 }}
               >
