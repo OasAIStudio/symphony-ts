@@ -926,6 +926,170 @@ describe("token-report.mjs analyze", () => {
     expect(result.per_stage_spend.implement).toBeDefined();
   });
 
+  it("SYMPH-186: inflection records include pipeline_classification and llm_insight fields", () => {
+    // Generate 35 days with a spike pattern in the last 7 days
+    const records: Record<string, unknown>[] = [];
+    const now = new Date();
+
+    // Days 8-34: normal (3000 tokens)
+    for (let d = 8; d < 35; d++) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - d);
+      records.push(
+        makeTokenRecord({
+          timestamp: date.toISOString(),
+          stage_name: "implement",
+          total_total_tokens: 3000,
+          issue_identifier: `SYMPH-N${d}`,
+        }),
+      );
+    }
+
+    // Days 0-7: spike (6000 tokens — >15% above baseline)
+    for (let d = 0; d < 7; d++) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - d);
+      records.push(
+        makeTokenRecord({
+          timestamp: date.toISOString(),
+          stage_name: "implement",
+          total_total_tokens: 6000,
+          issue_identifier: `SYMPH-S${d}`,
+        }),
+      );
+    }
+
+    writeTokenHistory(symphonyHome, records);
+    writeConfigHistory(symphonyHome, [makeConfigSnapshot()]);
+
+    const result = runAnalyze(symphonyHome);
+
+    expect(Array.isArray(result.inflections)).toBe(true);
+    expect(result.inflections.length).toBeGreaterThanOrEqual(1);
+
+    const inf = result.inflections[0];
+    // SYMPH-186: pipeline_classification field must exist
+    expect(inf.pipeline_classification).toBeDefined();
+    expect(Array.isArray(inf.pipeline_classification)).toBe(true);
+
+    // SYMPH-186: llm_insight should be null when TOKEN_REPORT_LLM is not set
+    expect(inf.llm_insight).toBeNull();
+  });
+
+  it("SYMPH-186: spec-gen stage is excluded from inflection aggregations", () => {
+    const records: Record<string, unknown>[] = [];
+    const now = new Date();
+
+    // Generate spec-gen records with a spike that would trigger inflection
+    // Days 8-34: normal spec-gen (3000 tokens)
+    for (let d = 8; d < 35; d++) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - d);
+      records.push(
+        makeTokenRecord({
+          timestamp: date.toISOString(),
+          stage_name: "spec-gen",
+          total_total_tokens: 3000,
+          issue_identifier: `SYMPH-SG${d}`,
+        }),
+      );
+    }
+
+    // Days 0-7: spec-gen spike (6000 tokens)
+    for (let d = 0; d < 7; d++) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - d);
+      records.push(
+        makeTokenRecord({
+          timestamp: date.toISOString(),
+          stage_name: "spec-gen",
+          total_total_tokens: 6000,
+          issue_identifier: `SYMPH-SGS${d}`,
+        }),
+      );
+    }
+
+    // Add steady implement records so we have >=30d of non-spec-gen data
+    // (needed to reach the >=30d tier where inflection detection runs)
+    for (let d = 0; d < 35; d++) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - d);
+      records.push(
+        makeTokenRecord({
+          timestamp: date.toISOString(),
+          stage_name: "implement",
+          total_total_tokens: 3000,
+          issue_identifier: `SYMPH-IM${d}`,
+        }),
+      );
+    }
+
+    writeTokenHistory(symphonyHome, records);
+    writeConfigHistory(symphonyHome, [makeConfigSnapshot()]);
+
+    const result = runAnalyze(symphonyHome);
+
+    // With >=30d of non-spec-gen data, inflections should be an array
+    expect(Array.isArray(result.inflections)).toBe(true);
+    // spec-gen should never appear in inflections since it's filtered out
+    const specGenInflections = result.inflections.filter(
+      (inf: Record<string, unknown>) => inf.metric === "spec-gen",
+    );
+    expect(specGenInflections).toHaveLength(0);
+  });
+
+  it("SYMPH-186: pipeline_classification contains raw ticket data, not classification labels", () => {
+    const records: Record<string, unknown>[] = [];
+    const now = new Date();
+
+    // Days 8-34: normal (3000 tokens)
+    for (let d = 8; d < 35; d++) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - d);
+      records.push(
+        makeTokenRecord({
+          timestamp: date.toISOString(),
+          stage_name: "implement",
+          total_total_tokens: 3000,
+          issue_identifier: `SYMPH-N${d}`,
+        }),
+      );
+    }
+
+    // Days 0-7: spike (6000 tokens)
+    for (let d = 0; d < 7; d++) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - d);
+      records.push(
+        makeTokenRecord({
+          timestamp: date.toISOString(),
+          stage_name: "implement",
+          total_total_tokens: 6000,
+          issue_identifier: `SYMPH-S${d}`,
+        }),
+      );
+    }
+
+    writeTokenHistory(symphonyHome, records);
+    writeConfigHistory(symphonyHome, [makeConfigSnapshot()]);
+
+    const result = runAnalyze(symphonyHome);
+
+    expect(result.inflections.length).toBeGreaterThanOrEqual(1);
+    const inf = result.inflections[0];
+
+    // pipeline_classification entries should NOT contain classification labels
+    if (inf.pipeline_classification.length > 0) {
+      const entry = inf.pipeline_classification[0];
+      expect(entry.identifier).toBeDefined();
+      // Should have raw fields, not COMPLEX/STANDARD/TRIVIAL labels
+      expect(entry).not.toHaveProperty("classification");
+      expect(entry).toHaveProperty("task_count");
+      expect(entry).toHaveProperty("parent_identifier");
+      expect(entry).toHaveProperty("parent_title");
+    }
+  });
+
   it("outlier detection with Linear hypothesis structure", () => {
     const records: Record<string, unknown>[] = [];
     const now = new Date();

@@ -17,6 +17,7 @@
  *   SLACK_BOT_TOKEN    — Slack bot token; graceful degradation without it
  *   BASE_URL           — hostname:port for report links (never hardcode localhost)
  *   TOKEN_REPORT_PORT  — port for report server (default 8090)
+ *   TOKEN_REPORT_LLM   — set to "1" to enable LLM insight generation via `claude -p` CLI
  *
  * SYMPH-129, SYMPH-130, SYMPH-131
  */
@@ -882,13 +883,15 @@ function computePerProduct(records) {
  * Requires >=20 samples in baseline (30d).
  */
 function detectInflections(records, configRecords, now) {
+  // SYMPH-186: filter spec-gen stage from inflection aggregations
+  const filteredRecords = records.filter((r) => r.stage_name !== "spec-gen");
   const stageNames = [
-    ...new Set(records.map((r) => r.stage_name).filter(Boolean)),
+    ...new Set(filteredRecords.map((r) => r.stage_name).filter(Boolean)),
   ];
   const inflections = [];
 
   for (const stage of stageNames) {
-    const stageRecords = records.filter((r) => r.stage_name === stage);
+    const stageRecords = filteredRecords.filter((r) => r.stage_name === stage);
 
     const d7 = daysAgo(7, now);
     const d30 = daysAgo(30, now);
@@ -957,6 +960,16 @@ function detectInflections(records, configRecords, now) {
       }
     }
 
+    // SYMPH-186: Build pipeline_classification from raw ticket data in window
+    const ticketMixAttribution = attributions.find(
+      (a) => a.type === "ticket_mix",
+    );
+    const windowIssueIds = ticketMixAttribution?.window_issues ?? [];
+    const pipelineClassification = buildPipelineClassification(
+      windowIssueIds,
+      stageRecords,
+    );
+
     inflections.push({
       stage,
       direction,
@@ -964,10 +977,54 @@ function detectInflections(records, configRecords, now) {
       avg_7d: round(avg7, 0),
       avg_30d: round(avg30, 0),
       attributions,
+      pipeline_classification: pipelineClassification,
     });
   }
 
   return inflections;
+}
+
+/**
+ * Build pipeline classification from raw ticket data.
+ * Returns an array of { identifier, title, task_count, parent_identifier, parent_title }
+ * for each unique issue in the inflection window.
+ * SYMPH-186: Shows raw ticket data instead of COMPLEX/STANDARD/TRIVIAL labels.
+ */
+function buildPipelineClassification(windowIssueIds, records) {
+  if (!windowIssueIds || windowIssueIds.length === 0) return [];
+
+  return windowIssueIds.map((identifier) => {
+    const record = records.find((r) => r.issue_identifier === identifier);
+    const issueId = record?.issue_id ?? null;
+
+    // Fetch parent spec for raw metadata (reuses cached data)
+    const parent = getLinearParentSpec(issueId, identifier);
+    const taskCount = parent ? countTasks(parent.description) : null;
+
+    return {
+      identifier,
+      title: record?.issue_title ?? null,
+      task_count: taskCount,
+      parent_identifier: parent?.identifier ?? null,
+      parent_title: parent?.title ?? null,
+    };
+  });
+}
+
+/**
+ * Count task-like lines in a description string.
+ * SYMPH-186: Extracted from classifyParentComplexity to reuse without labels.
+ */
+function countTasks(description) {
+  if (!description) return 0;
+  return description
+    .split("\n")
+    .filter(
+      (l) =>
+        /^\s*[-*]\s*\[/.test(l) ||
+        /^\s*\d+[.)]\s/.test(l) ||
+        /^\s*[-*]\s+\S/.test(l),
+    ).length;
 }
 
 /**
@@ -1223,6 +1280,9 @@ function generateInflectionInsight(inflection) {
       `7-day avg: ${inflection.avg_7d} tokens`,
       `30-day avg: ${inflection.avg_30d} tokens`,
       inflection.context ? `Context: ${inflection.context}` : "",
+      inflection.pipeline_classification?.length > 0
+        ? `Pipeline classification: ${JSON.stringify(inflection.pipeline_classification)}`
+        : "",
       "Respond with only the insight, no preamble.",
     ]
       .filter(Boolean)
@@ -1313,6 +1373,7 @@ function computeAnalysis() {
       now,
     );
     // Transform detectInflections output to UI Inflection shape (SYMPH-185)
+    // SYMPH-186: pass through pipeline_classification from raw inflection
     inflections = rawInflections.map((inf) => {
       const mapped = {
         date: dateKey(d7),
@@ -1323,6 +1384,7 @@ function computeAnalysis() {
         avg_7d: inf.avg_7d,
         avg_30d: inf.avg_30d,
         attributions: inf.attributions,
+        pipeline_classification: inf.pipeline_classification ?? [],
         llm_insight: null,
       };
       mapped.llm_insight = generateInflectionInsight(mapped);
@@ -1930,7 +1992,7 @@ ${
           (inf) => `
 <div class="inflection-panel">
   <div class="label">⚡ Inflection: ${escHtml(inf.metric)} — ${escHtml(inf.direction)} ${round(inf.magnitude * 100, 1)}%</div>
-  <div style="color:var(--text-muted);font-size:0.85rem;margin-top:4px">7d avg: ${fmtNum(inf.avg_7d)} · 30d avg: ${fmtNum(inf.avg_30d)}${inf.context ? ` · ${escHtml(inf.context)}` : ""}${inf.llm_insight ? `<br/>💡 ${escHtml(inf.llm_insight)}` : ""}</div>
+  <div style="color:var(--text-muted);font-size:0.85rem;margin-top:4px">7d avg: ${fmtNum(inf.avg_7d)} · 30d avg: ${fmtNum(inf.avg_30d)}${inf.context ? ` · ${escHtml(inf.context)}` : ""}${inf.llm_insight ? `<br/>💡 ${escHtml(inf.llm_insight)}` : ""}</div>${inf.pipeline_classification?.length > 0 ? `\n  <div style="color:var(--text-muted);font-size:0.85rem;margin-top:4px">Tickets: ${inf.pipeline_classification.map((t) => `${escHtml(t.identifier)}${t.task_count != null ? ` (${t.task_count} tasks)` : ""}${t.parent_identifier ? ` → ${escHtml(t.parent_identifier)}` : ""}`).join(", ")}</div>` : ""}
 </div>`,
         )
         .join("")
@@ -2244,14 +2306,24 @@ function runSlack() {
     );
   }
 
-  // --- Section 8: Inflections ---
+  // --- Section 8: Inflections (SYMPH-186: includes pipeline classification) ---
   if (inflections.length > 0) {
-    const inflectionLines = inflections
-      .slice(0, 5)
-      .map(
-        (inf) =>
-          `>  • ⚡ ${inf.metric}: ${inf.direction} *${round(inf.magnitude * 100, 1)}%* (7d avg crossed 30d avg)`,
-      );
+    const inflectionLines = inflections.slice(0, 5).map((inf) => {
+      let line = `>  • ⚡ ${inf.metric}: ${inf.direction} *${round(inf.magnitude * 100, 1)}%* (7d avg crossed 30d avg)`;
+      if (inf.pipeline_classification?.length > 0) {
+        const tickets = inf.pipeline_classification
+          .map(
+            (t) =>
+              `${t.identifier}${t.task_count != null ? ` (${t.task_count} tasks)` : ""}`,
+          )
+          .join(", ");
+        line += `\n>    Tickets: ${tickets}`;
+      }
+      if (inf.llm_insight) {
+        line += `\n>    💡 ${inf.llm_insight}`;
+      }
+      return line;
+    });
     sections.push(`*Trend Inflections*\n${inflectionLines.join("\n")}`);
   } else {
     sections.push(
