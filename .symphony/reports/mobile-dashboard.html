@@ -1,0 +1,1088 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Symphony Pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: dark;
+  --page: #0a0a0c;
+  --page-soft: #111115;
+  --card: rgba(24, 24, 30, 0.95);
+  --card-hover: rgba(30, 30, 38, 0.95);
+  --ink: #e8e8ec;
+  --ink-secondary: #b0b0be;
+  --muted: #6e6e82;
+  --line: #222230;
+  --line-strong: #333340;
+  --accent: #5e6ad2;
+  --accent-soft: rgba(94, 106, 210, 0.12);
+  --accent-ink: #8b93e6;
+  --green: #4ade80;
+  --green-soft: rgba(74, 222, 128, 0.10);
+  --yellow: #fbbf24;
+  --yellow-soft: rgba(251, 191, 36, 0.10);
+  --red: #f87171;
+  --red-soft: rgba(248, 113, 113, 0.10);
+  --orange: #fb923c;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.4);
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html {
+  background: var(--page);
+  font-family: var(--font-sans);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  font-size: 15px;
+}
+body {
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: calc(env(safe-area-inset-bottom) + 64px);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* ── Port Config Overlay ── */
+#port-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: var(--page);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 24px;
+}
+#port-overlay.hidden { display: none; }
+.port-logo { font-size: 32px; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.5px; }
+.port-subtitle { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+.port-input-group { display: flex; gap: 8px; width: 100%; max-width: 320px; }
+.port-input {
+  flex: 1; padding: 12px 16px; border-radius: var(--radius);
+  background: var(--page-soft); border: 1px solid var(--line);
+  color: var(--ink); font-family: var(--font-mono); font-size: 16px;
+  outline: none; text-align: center;
+}
+.port-input:focus { border-color: var(--accent); }
+.port-input::placeholder { color: var(--muted); }
+.port-btn {
+  padding: 12px 24px; border-radius: var(--radius);
+  background: var(--accent); color: #fff; font-weight: 600;
+  font-size: 15px; border: none; cursor: pointer;
+  transition: opacity 0.15s;
+}
+.port-btn:active { opacity: 0.8; }
+.port-saved {
+  margin-top: 12px; font-size: 13px; color: var(--muted);
+}
+
+/* ── App Shell ── */
+#app { display: none; }
+#app.active { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }
+
+/* Header */
+.header {
+  padding: 12px 16px; display: flex; align-items: center; gap: 12px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(10, 10, 12, 0.85);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  position: sticky; top: 0; z-index: 50;
+  padding-top: calc(env(safe-area-inset-top) + 12px);
+}
+.header-back {
+  display: none; background: none; border: none; color: var(--accent-ink);
+  font-size: 15px; font-weight: 500; cursor: pointer; padding: 4px 0;
+}
+.header-back.visible { display: block; }
+.header-title { flex: 1; font-size: 17px; font-weight: 600; letter-spacing: -0.3px; }
+.header-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--muted);
+  flex-shrink: 0;
+}
+.header-dot.connected { background: var(--green); animation: pulse 2s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+.header-settings {
+  background: none; border: none; color: var(--muted); font-size: 18px;
+  cursor: pointer; padding: 4px;
+}
+
+/* ── Tab Bar (bottom) ── */
+.tab-bar {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  display: flex; background: rgba(10, 10, 12, 0.92);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+  z-index: 50;
+}
+.tab-item {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  padding: 8px 0 6px; gap: 2px; background: none; border: none;
+  color: var(--muted); font-size: 10px; font-weight: 500; cursor: pointer;
+  transition: color 0.15s;
+}
+.tab-item.active { color: var(--accent-ink); }
+.tab-icon { font-size: 20px; line-height: 1; }
+
+/* ── Screens ── */
+.screen { display: none; flex: 1; overflow-y: auto; }
+.screen.active { display: block; }
+.screen-content { padding: 16px; }
+
+/* ── Status Bar ── */
+.status-bar {
+  display: flex; gap: 1px; padding: 16px 16px 8px; background: var(--page);
+}
+.status-item {
+  flex: 1; text-align: center; padding: 12px 4px;
+  background: var(--page-soft); border-radius: var(--radius-sm);
+}
+.status-item:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.status-item:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.status-count {
+  font-size: 22px; font-weight: 700; font-family: var(--font-mono);
+  letter-spacing: -0.5px;
+}
+.status-label { font-size: 11px; color: var(--muted); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
+.status-item.running .status-count { color: var(--green); }
+.status-item.retrying .status-count { color: var(--yellow); }
+.status-item.completed .status-count { color: var(--accent-ink); }
+.status-item.failed .status-count { color: var(--red); }
+
+/* ── Issue Cards ── */
+.section-title {
+  font-size: 13px; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.8px;
+  padding: 16px 0 8px;
+}
+.issue-card {
+  background: var(--card); border-radius: var(--radius);
+  padding: 14px 16px; margin-bottom: 8px;
+  border: 1px solid var(--line); cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.issue-card:active { background: var(--card-hover); border-color: var(--line-strong); }
+.issue-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.issue-id {
+  font-family: var(--font-mono); font-size: 13px; font-weight: 500;
+  color: var(--accent-ink);
+}
+.issue-stage {
+  font-size: 11px; font-weight: 600; padding: 2px 8px;
+  border-radius: 99px; text-transform: uppercase; letter-spacing: 0.3px;
+}
+.stage-investigate { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
+.stage-implement { background: var(--green-soft); color: var(--green); }
+.stage-review { background: rgba(251, 191, 36, 0.12); color: var(--yellow); }
+.stage-merge { background: rgba(94, 106, 210, 0.12); color: var(--accent-ink); }
+.health-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-left: auto;
+}
+.health-green { background: var(--green); }
+.health-yellow { background: var(--yellow); }
+.health-red { background: var(--red); animation: pulse 1.5s infinite; }
+.issue-title {
+  font-size: 14px; font-weight: 500; line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.issue-meta {
+  display: flex; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--muted);
+  font-family: var(--font-mono);
+}
+.issue-meta-item { display: flex; align-items: center; gap: 4px; }
+
+/* ── Retry Cards ── */
+.retry-card {
+  background: var(--card); border-radius: var(--radius);
+  padding: 14px 16px; margin-bottom: 8px;
+  border: 1px solid rgba(251, 191, 36, 0.2);
+}
+.retry-header { display: flex; align-items: center; gap: 8px; }
+.retry-id { font-family: var(--font-mono); font-size: 13px; color: var(--yellow); font-weight: 500; }
+.retry-attempt { font-size: 11px; color: var(--muted); }
+.retry-error {
+  font-size: 12px; color: var(--red); margin-top: 6px;
+  font-family: var(--font-mono); line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.retry-due { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+/* ── Totals Bar ── */
+.totals-bar {
+  display: flex; gap: 12px; padding: 12px 16px; margin: 8px 0;
+  background: var(--page-soft); border-radius: var(--radius-sm);
+  font-size: 12px; font-family: var(--font-mono); color: var(--muted);
+  flex-wrap: wrap;
+}
+.totals-bar span { white-space: nowrap; }
+.totals-bar .value { color: var(--ink-secondary); }
+
+/* ── Issue Detail Screen ── */
+.detail-header { padding: 16px; }
+.detail-id {
+  font-family: var(--font-mono); font-size: 15px; font-weight: 600;
+  color: var(--accent-ink); margin-bottom: 4px;
+}
+.detail-title { font-size: 18px; font-weight: 700; line-height: 1.3; margin-bottom: 12px; }
+.detail-badges { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.detail-badge {
+  font-size: 12px; font-weight: 600; padding: 3px 10px;
+  border-radius: 99px; text-transform: uppercase;
+}
+
+/* Stage Breakdown Bar */
+.stage-bar-container { padding: 0 16px 16px; }
+.stage-bar-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 500; }
+.stage-bar {
+  display: flex; height: 8px; border-radius: 4px; overflow: hidden;
+  background: var(--page-soft); gap: 2px;
+}
+.stage-bar-segment {
+  border-radius: 4px; transition: flex 0.3s ease;
+  min-width: 4px;
+}
+.stage-bar-segment.investigate { background: #818cf8; }
+.stage-bar-segment.implement { background: var(--green); }
+.stage-bar-segment.review { background: var(--yellow); }
+.stage-bar-segment.merge { background: var(--accent-ink); }
+.stage-bar-segment.current { animation: barPulse 2s infinite; }
+@keyframes barPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+.stage-bar-legend {
+  display: flex; gap: 12px; margin-top: 6px; font-size: 11px; color: var(--muted);
+  flex-wrap: wrap;
+}
+.legend-dot {
+  width: 6px; height: 6px; border-radius: 50%; display: inline-block;
+  margin-right: 4px; vertical-align: middle;
+}
+
+/* Live Metrics Grid */
+.metrics-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  padding: 0 16px 16px;
+}
+.metric-card {
+  background: var(--page-soft); border-radius: var(--radius-sm);
+  padding: 12px; border: 1px solid var(--line);
+}
+.metric-value {
+  font-size: 20px; font-weight: 700; font-family: var(--font-mono);
+  letter-spacing: -0.5px;
+}
+.metric-label { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* Activity Feed */
+.activity-section { padding: 0 16px 16px; }
+.activity-item {
+  display: flex; gap: 10px; padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.activity-item:last-child { border-bottom: none; }
+.activity-time {
+  font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+  white-space: nowrap; flex-shrink: 0; min-width: 56px;
+}
+.activity-text { color: var(--ink-secondary); line-height: 1.4; }
+.activity-event-tag {
+  font-family: var(--font-mono); font-size: 11px;
+  color: var(--accent-ink); font-weight: 500;
+}
+
+/* Deep Links */
+.deep-links {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 0 16px 16px;
+}
+.deep-link {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; border-radius: var(--radius);
+  background: var(--page-soft); border: 1px solid var(--line);
+  color: var(--ink); text-decoration: none; font-size: 14px; font-weight: 500;
+  transition: background 0.15s;
+}
+.deep-link:active { background: var(--card-hover); }
+.deep-link-icon { font-size: 18px; }
+.deep-link-arrow { margin-left: auto; color: var(--muted); font-size: 16px; }
+
+/* ── Reports Screen ── */
+.report-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px; border-bottom: 1px solid var(--line);
+  text-decoration: none; color: var(--ink);
+  transition: background 0.15s;
+}
+.report-item:active { background: var(--page-soft); }
+.report-date { font-weight: 600; font-size: 15px; }
+.report-size { font-size: 12px; color: var(--muted); font-family: var(--font-mono); }
+.report-arrow { margin-left: auto; color: var(--muted); }
+
+/* ── Empty State ── */
+.empty-state {
+  text-align: center; padding: 48px 24px; color: var(--muted);
+}
+.empty-state-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.5; }
+.empty-state-text { font-size: 15px; }
+
+/* ── Hold-to-confirm ── */
+.hold-btn {
+  position: relative; overflow: hidden;
+  padding: 12px 24px; border-radius: var(--radius);
+  background: var(--red-soft); border: 1px solid rgba(248, 113, 113, 0.3);
+  color: var(--red); font-weight: 600; font-size: 14px;
+  cursor: pointer; user-select: none; -webkit-user-select: none;
+  width: 100%;
+}
+.hold-btn .hold-fill {
+  position: absolute; top: 0; left: 0; bottom: 0; width: 0;
+  background: rgba(248, 113, 113, 0.15);
+  transition: width 2s linear;
+}
+.hold-btn.holding .hold-fill { width: 100%; }
+.hold-btn-text { position: relative; z-index: 1; }
+
+/* ── Error Banner ── */
+.error-banner {
+  background: var(--red-soft); border: 1px solid rgba(248, 113, 113, 0.25);
+  border-radius: var(--radius-sm); padding: 10px 14px; margin: 8px 16px;
+  font-size: 13px; color: var(--red); font-family: var(--font-mono);
+  line-height: 1.4; display: none;
+}
+.error-banner.visible { display: block; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<!-- Port Configuration -->
+<div id="port-overlay">
+  <div class="port-logo">Symphony</div>
+  <div class="port-subtitle">Connect to dashboard server</div>
+  <div class="port-input-group">
+    <input type="text" class="port-input" id="port-input" placeholder="host:port or port" autofocus>
+    <button class="port-btn" id="port-connect">Connect</button>
+  </div>
+  <div class="port-saved" id="port-saved"></div>
+</div>
+
+<!-- App Shell -->
+<div id="app">
+  <!-- Header -->
+  <header class="header">
+    <button class="header-back" id="header-back">← Back</button>
+    <div class="header-title" id="header-title">Pipeline</div>
+    <div class="header-dot" id="connection-dot" title="SSE connection status"></div>
+    <button class="header-settings" id="header-settings" title="Change server">⚙</button>
+  </header>
+
+  <!-- Error Banner -->
+  <div class="error-banner" id="error-banner"></div>
+
+  <!-- Pipeline Screen -->
+  <div class="screen active" id="screen-pipeline">
+    <div class="status-bar" id="status-bar">
+      <div class="status-item running">
+        <div class="status-count" id="count-running">–</div>
+        <div class="status-label">Running</div>
+      </div>
+      <div class="status-item retrying">
+        <div class="status-count" id="count-retrying">–</div>
+        <div class="status-label">Retry</div>
+      </div>
+      <div class="status-item completed">
+        <div class="status-count" id="count-completed">–</div>
+        <div class="status-label">Done</div>
+      </div>
+      <div class="status-item failed">
+        <div class="status-count" id="count-failed">–</div>
+        <div class="status-label">Failed</div>
+      </div>
+    </div>
+    <div class="totals-bar" id="totals-bar"></div>
+    <div class="screen-content" id="pipeline-content">
+      <div class="empty-state">
+        <div class="empty-state-icon">📡</div>
+        <div class="empty-state-text">Connecting…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue Detail Screen -->
+  <div class="screen" id="screen-detail"></div>
+
+  <!-- Reports Screen -->
+  <div class="screen" id="screen-reports">
+    <div class="screen-content" id="reports-content">
+      <div class="empty-state">
+        <div class="empty-state-icon">📊</div>
+        <div class="empty-state-text">No reports found</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab Bar -->
+  <nav class="tab-bar">
+    <button class="tab-item active" data-tab="pipeline">
+      <span class="tab-icon">▶</span>
+      Pipeline
+    </button>
+    <button class="tab-item" data-tab="reports">
+      <span class="tab-icon">📊</span>
+      Reports
+    </button>
+  </nav>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ── State ──
+  let baseUrl = '';
+  let eventSource = null;
+  let snapshot = null;
+  let currentScreen = 'pipeline';
+  let selectedIssueId = null;
+  let stopHoldTimer = null;
+
+  const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => document.querySelectorAll(sel);
+
+  // ── Port Configuration ──
+  const savedBase = localStorage.getItem('symphony_base_url');
+  if (savedBase) {
+    $('#port-saved').textContent = `Last: ${savedBase}`;
+  }
+
+  function parseBaseUrl(input) {
+    input = input.trim();
+    if (!input) return null;
+    // If just a number, treat as port on the BASE_URL env pattern
+    if (/^\d+$/.test(input)) {
+      return `http://localhost:${input}`;
+    }
+    // If no protocol, add http://
+    if (!/^https?:\/\//.test(input)) {
+      return `http://${input}`;
+    }
+    return input;
+  }
+
+  function connect(url) {
+    baseUrl = url;
+    localStorage.setItem('symphony_base_url', url);
+    $('#port-overlay').classList.add('hidden');
+    $('#app').classList.add('active');
+    startSSE();
+    loadReports();
+  }
+
+  $('#port-connect').addEventListener('click', () => {
+    const url = parseBaseUrl($('#port-input').value);
+    if (url) connect(url);
+  });
+
+  $('#port-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const url = parseBaseUrl($('#port-input').value);
+      if (url) connect(url);
+    }
+  });
+
+  // Auto-connect if saved
+  if (savedBase) {
+    $('#port-input').value = savedBase.replace(/^https?:\/\//, '');
+    connect(savedBase);
+  }
+
+  // Settings button → reconnect
+  $('#header-settings').addEventListener('click', () => {
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    $('#connection-dot').classList.remove('connected');
+    $('#app').classList.remove('active');
+    $('#port-overlay').classList.remove('hidden');
+    $('#port-input').focus();
+  });
+
+  // ── SSE Connection ──
+  function startSSE() {
+    if (eventSource) eventSource.close();
+    const dot = $('#connection-dot');
+    dot.classList.remove('connected');
+
+    try {
+      eventSource = new EventSource(`${baseUrl}/api/v1/events`);
+
+      eventSource.addEventListener('snapshot', (e) => {
+        try {
+          snapshot = JSON.parse(e.data);
+          dot.classList.add('connected');
+          hideError();
+          renderPipeline();
+          if (currentScreen === 'detail' && selectedIssueId) {
+            renderDetail(selectedIssueId);
+          }
+        } catch (err) {
+          showError('Failed to parse snapshot: ' + err.message);
+        }
+      });
+
+      eventSource.addEventListener('error', (e) => {
+        if (e.data) {
+          try {
+            const err = JSON.parse(e.data);
+            showError(err.message || err.code || 'SSE error');
+          } catch (_) {
+            showError('Connection error');
+          }
+        }
+      });
+
+      eventSource.onerror = () => {
+        dot.classList.remove('connected');
+      };
+
+      // Also do an initial fetch in case SSE takes a moment
+      fetch(`${baseUrl}/api/v1/state`)
+        .then(r => r.json())
+        .then(data => {
+          if (!snapshot) {
+            snapshot = data;
+            dot.classList.add('connected');
+            renderPipeline();
+          }
+        })
+        .catch(() => {});
+    } catch (err) {
+      showError('Failed to connect: ' + err.message);
+    }
+  }
+
+  // ── Error Banner ──
+  function showError(msg) {
+    const el = $('#error-banner');
+    el.textContent = msg;
+    el.classList.add('visible');
+  }
+  function hideError() {
+    $('#error-banner').classList.remove('visible');
+  }
+
+  // ── Navigation ──
+  $$('.tab-item').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const target = tab.dataset.tab;
+      navigateTo(target);
+    });
+  });
+
+  function navigateTo(screen, issueId) {
+    // Deactivate all screens
+    $$('.screen').forEach(s => s.classList.remove('active'));
+    $$('.tab-item').forEach(t => t.classList.remove('active'));
+
+    currentScreen = screen;
+    selectedIssueId = issueId || null;
+
+    if (screen === 'pipeline') {
+      $('#screen-pipeline').classList.add('active');
+      $(`.tab-item[data-tab="pipeline"]`).classList.add('active');
+      $('#header-back').classList.remove('visible');
+      $('#header-title').textContent = 'Pipeline';
+    } else if (screen === 'detail') {
+      $('#screen-detail').classList.add('active');
+      $('#header-back').classList.add('visible');
+      $('#header-title').textContent = issueId || 'Issue';
+      renderDetail(issueId);
+    } else if (screen === 'reports') {
+      $('#screen-reports').classList.add('active');
+      $(`.tab-item[data-tab="reports"]`).classList.add('active');
+      $('#header-back').classList.remove('visible');
+      $('#header-title').textContent = 'Reports';
+    }
+  }
+
+  $('#header-back').addEventListener('click', () => {
+    navigateTo('pipeline');
+  });
+
+  // ── Pipeline Rendering ──
+  function renderPipeline() {
+    if (!snapshot) return;
+
+    // Status counts
+    $('#count-running').textContent = snapshot.counts.running;
+    $('#count-retrying').textContent = snapshot.counts.retrying;
+    $('#count-completed').textContent = snapshot.counts.completed;
+    $('#count-failed').textContent = snapshot.counts.failed;
+
+    // Totals bar
+    const t = snapshot.codex_totals;
+    $('#totals-bar').innerHTML = `
+      <span>Tokens: <span class="value">${fmtNum(t.total_tokens)}</span></span>
+      <span>In: <span class="value">${fmtNum(t.input_tokens)}</span></span>
+      <span>Out: <span class="value">${fmtNum(t.output_tokens)}</span></span>
+      <span>Runtime: <span class="value">${fmtDuration(t.seconds_running)}</span></span>
+    `;
+
+    // Build content
+    let html = '';
+
+    // Running issues
+    if (snapshot.running.length > 0) {
+      html += `<div class="section-title">Running</div>`;
+      for (const issue of snapshot.running) {
+        html += renderIssueCard(issue);
+      }
+    }
+
+    // Retrying issues
+    if (snapshot.retrying.length > 0) {
+      html += `<div class="section-title">Retrying</div>`;
+      for (const retry of snapshot.retrying) {
+        html += renderRetryCard(retry);
+      }
+    }
+
+    // Empty state
+    if (snapshot.running.length === 0 && snapshot.retrying.length === 0) {
+      html += `
+        <div class="empty-state">
+          <div class="empty-state-icon">✓</div>
+          <div class="empty-state-text">No active pipelines</div>
+        </div>`;
+    }
+
+    $('#pipeline-content').innerHTML = html;
+
+    // Attach click handlers
+    $$('.issue-card').forEach(card => {
+      card.addEventListener('click', () => {
+        navigateTo('detail', card.dataset.issueIdentifier);
+      });
+    });
+  }
+
+  function renderIssueCard(issue) {
+    const stageClass = issue.pipeline_stage ? `stage-${issue.pipeline_stage}` : '';
+    const healthClass = `health-${issue.health}`;
+    return `
+      <div class="issue-card" data-issue-identifier="${esc(issue.issue_identifier)}">
+        <div class="issue-card-header">
+          <span class="issue-id">${esc(issue.issue_identifier)}</span>
+          ${issue.pipeline_stage ? `<span class="issue-stage ${stageClass}">${esc(issue.pipeline_stage)}</span>` : ''}
+          <span class="health-dot ${healthClass}" title="${esc(issue.health_reason || issue.health)}"></span>
+        </div>
+        <div class="issue-title">${esc(issue.issue_title)}</div>
+        <div class="issue-meta">
+          <span class="issue-meta-item">↻ ${issue.turn_count}</span>
+          <span class="issue-meta-item">⏱ ${fmtDuration(issue.stage_duration_seconds)}</span>
+          <span class="issue-meta-item">${fmtNum(issue.tokens.total_tokens)} tok</span>
+        </div>
+      </div>`;
+  }
+
+  function renderRetryCard(retry) {
+    return `
+      <div class="retry-card">
+        <div class="retry-header">
+          <span class="retry-id">${esc(retry.issue_identifier || retry.issue_id)}</span>
+          <span class="retry-attempt">attempt ${retry.attempt}</span>
+        </div>
+        ${retry.error ? `<div class="retry-error">${esc(retry.error)}</div>` : ''}
+        <div class="retry-due">Due: ${esc(retry.due_at)}</div>
+      </div>`;
+  }
+
+  // ── Issue Detail Rendering ──
+  function renderDetail(issueIdentifier) {
+    const container = $('#screen-detail');
+    if (!snapshot || !issueIdentifier) {
+      container.innerHTML = `<div class="empty-state"><div class="empty-state-text">Loading…</div></div>`;
+      return;
+    }
+
+    // Find issue in snapshot
+    const issue = snapshot.running.find(r => r.issue_identifier === issueIdentifier);
+    if (!issue) {
+      // Try fetching from API
+      fetchIssueDetail(issueIdentifier);
+      return;
+    }
+
+    renderDetailFromRunning(container, issue);
+  }
+
+  function renderDetailFromRunning(container, issue) {
+    const stageClass = issue.pipeline_stage ? `stage-${issue.pipeline_stage}` : '';
+    const healthClass = `health-${issue.health}`;
+    const linearUrl = `https://linear.app/issue/${encodeURIComponent(issue.issue_identifier)}`;
+
+    // Build stage breakdown bar from execution_history
+    const stageBarHtml = buildStageBar(issue);
+    const metricsHtml = buildMetrics(issue);
+    const activityHtml = buildActivityFeed(issue);
+
+    container.innerHTML = `
+      <div class="detail-header">
+        <div class="detail-id">${esc(issue.issue_identifier)}</div>
+        <div class="detail-title">${esc(issue.issue_title)}</div>
+        <div class="detail-badges">
+          ${issue.pipeline_stage ? `<span class="detail-badge ${stageClass}">${esc(issue.pipeline_stage)}</span>` : ''}
+          <span class="detail-badge" style="background:${issue.health === 'green' ? 'var(--green-soft)' : issue.health === 'yellow' ? 'var(--yellow-soft)' : 'var(--red-soft)'};color:${issue.health === 'green' ? 'var(--green)' : issue.health === 'yellow' ? 'var(--yellow)' : 'var(--red)'}">
+            ${esc(issue.health)}${issue.health_reason ? ' — ' + esc(issue.health_reason) : ''}
+          </span>
+          ${issue.rework_count ? `<span class="detail-badge" style="background:var(--yellow-soft);color:var(--yellow)">rework ×${issue.rework_count}</span>` : ''}
+        </div>
+      </div>
+
+      ${stageBarHtml}
+      ${metricsHtml}
+
+      <div class="section-title" style="padding:0 16px 8px">Activity</div>
+      <div class="activity-section">${activityHtml}</div>
+
+      <div class="section-title" style="padding:0 16px 8px">Links</div>
+      <div class="deep-links">
+        <a class="deep-link" href="${linearUrl}" target="_blank" rel="noopener">
+          <span class="deep-link-icon">◆</span>
+          Open in Linear
+          <span class="deep-link-arrow">→</span>
+        </a>
+        ${issue.last_tool_call ? `
+        <div class="deep-link" style="cursor:default">
+          <span class="deep-link-icon">🔧</span>
+          <span style="font-family:var(--font-mono);font-size:13px">${esc(issue.last_tool_call)}</span>
+        </div>` : ''}
+      </div>
+
+      ${issue.failure_reason ? `
+      <div class="section-title" style="padding:0 16px 8px;color:var(--red)">Last Error</div>
+      <div style="padding:0 16px 16px">
+        <div class="error-banner visible" style="margin:0">${esc(issue.failure_reason)}</div>
+      </div>` : ''}
+
+      <div style="padding:0 16px 24px">
+        <button class="hold-btn" id="stop-btn" data-issue="${esc(issue.issue_identifier)}">
+          <span class="hold-fill"></span>
+          <span class="hold-btn-text">Hold to Stop Issue</span>
+        </button>
+      </div>
+    `;
+
+    // Wire up hold-to-confirm stop
+    const stopBtn = $('#stop-btn');
+    if (stopBtn) {
+      wireHoldToConfirm(stopBtn, () => {
+        stopIssue(issue.issue_identifier);
+      });
+    }
+  }
+
+  function buildStageBar(issue) {
+    const history = issue.execution_history || [];
+    const stages = [...history];
+    // Add current stage
+    if (issue.pipeline_stage) {
+      stages.push({
+        stage: issue.pipeline_stage,
+        totalTokens: issue.tokens.total_tokens,
+        durationSeconds: issue.stage_duration_seconds,
+        current: true,
+      });
+    }
+
+    if (stages.length === 0) return '';
+
+    const totalTokens = stages.reduce((s, st) => s + (st.totalTokens || 0), 0);
+    const segments = stages.map(st => {
+      const pct = totalTokens > 0 ? Math.max(2, (st.totalTokens || 0) / totalTokens * 100) : 100 / stages.length;
+      const stageName = st.stage || 'unknown';
+      return `<div class="stage-bar-segment ${stageName} ${st.current ? 'current' : ''}" style="flex:${pct}" title="${stageName}: ${fmtNum(st.totalTokens || 0)} tokens"></div>`;
+    }).join('');
+
+    const legend = stages.map(st => {
+      const name = st.stage || 'unknown';
+      const colorMap = { investigate: '#818cf8', implement: 'var(--green)', review: 'var(--yellow)', merge: 'var(--accent-ink)' };
+      const color = colorMap[name] || 'var(--muted)';
+      return `<span><span class="legend-dot" style="background:${color}"></span>${name}${st.current ? ' ●' : ''}</span>`;
+    }).join('');
+
+    return `
+      <div class="stage-bar-container">
+        <div class="stage-bar-label">Stage Progress</div>
+        <div class="stage-bar">${segments}</div>
+        <div class="stage-bar-legend">${legend}</div>
+      </div>`;
+  }
+
+  function buildMetrics(issue) {
+    return `
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-value">${issue.turn_count}</div>
+          <div class="metric-label">Turns</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value">${fmtDuration(issue.stage_duration_seconds)}</div>
+          <div class="metric-label">Stage Duration</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value">${fmtNum(issue.tokens.total_tokens)}</div>
+          <div class="metric-label">Stage Tokens</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value">${fmtNum(issue.total_pipeline_tokens)}</div>
+          <div class="metric-label">Pipeline Tokens</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value">${fmtNum(Math.round(issue.tokens_per_turn))}</div>
+          <div class="metric-label">Tokens/Turn</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value">${fmtNum(issue.tokens.cache_read_tokens)}</div>
+          <div class="metric-label">Cache Read</div>
+        </div>
+      </div>`;
+  }
+
+  function buildActivityFeed(issue) {
+    const events = issue.recent_activity || [];
+    if (events.length === 0) {
+      return `<div style="color:var(--muted);font-size:13px;padding:8px 0">No recent activity</div>`;
+    }
+
+    return events.slice(-20).reverse().map(evt => {
+      const time = evt.timestamp ? fmtTime(evt.timestamp) : '';
+      const tool = evt.toolName || '';
+      const ctx = evt.context || '';
+      return `
+        <div class="activity-item">
+          <span class="activity-time">${esc(time)}</span>
+          <div>
+            <span class="activity-event-tag">${esc(tool)}</span>
+            ${ctx ? `<span class="activity-text"> ${esc(ctx)}</span>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  async function fetchIssueDetail(issueIdentifier) {
+    const container = $('#screen-detail');
+    try {
+      const resp = await fetch(`${baseUrl}/api/v1/${encodeURIComponent(issueIdentifier)}`);
+      if (!resp.ok) {
+        container.innerHTML = `<div class="empty-state"><div class="empty-state-text">Issue not found in current runtime</div></div>`;
+        return;
+      }
+      const data = await resp.json();
+      // Render from API detail response
+      renderDetailFromApi(container, data);
+    } catch (err) {
+      container.innerHTML = `<div class="empty-state"><div class="empty-state-text">Failed to load: ${esc(err.message)}</div></div>`;
+    }
+  }
+
+  function renderDetailFromApi(container, data) {
+    const linearUrl = `https://linear.app/issue/${encodeURIComponent(data.issue_identifier)}`;
+
+    let activityHtml = '';
+    if (data.recent_events && data.recent_events.length > 0) {
+      activityHtml = data.recent_events.slice(-20).reverse().map(evt => `
+        <div class="activity-item">
+          <span class="activity-time">${esc(fmtTime(evt.at))}</span>
+          <div>
+            <span class="activity-event-tag">${esc(evt.event)}</span>
+            ${evt.message ? `<span class="activity-text"> ${esc(evt.message)}</span>` : ''}
+          </div>
+        </div>`).join('');
+    } else {
+      activityHtml = `<div style="color:var(--muted);font-size:13px;padding:8px 0">No recent events</div>`;
+    }
+
+    const metricsHtml = data.running ? `
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-value">${data.running.turn_count}</div>
+          <div class="metric-label">Turns</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value">${esc(data.running.state)}</div>
+          <div class="metric-label">State</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value">${fmtNum(data.running.tokens.total_tokens)}</div>
+          <div class="metric-label">Tokens</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value">${data.attempts.restart_count}</div>
+          <div class="metric-label">Restarts</div>
+        </div>
+      </div>` : '';
+
+    container.innerHTML = `
+      <div class="detail-header">
+        <div class="detail-id">${esc(data.issue_identifier)}</div>
+        <div class="detail-badges">
+          <span class="detail-badge" style="background:var(--accent-soft);color:var(--accent-ink)">${esc(data.status)}</span>
+        </div>
+      </div>
+      ${metricsHtml}
+      <div class="section-title" style="padding:0 16px 8px">Events</div>
+      <div class="activity-section">${activityHtml}</div>
+      <div class="section-title" style="padding:0 16px 8px">Links</div>
+      <div class="deep-links">
+        <a class="deep-link" href="${linearUrl}" target="_blank" rel="noopener">
+          <span class="deep-link-icon">◆</span>
+          Open in Linear
+          <span class="deep-link-arrow">→</span>
+        </a>
+      </div>
+      ${data.last_error ? `
+      <div style="padding:0 16px 16px">
+        <div class="error-banner visible" style="margin:0">${esc(data.last_error)}</div>
+      </div>` : ''}
+    `;
+  }
+
+  // ── Hold-to-Confirm (2 seconds) ──
+  function wireHoldToConfirm(btn, onConfirm) {
+    let timer = null;
+
+    function start(e) {
+      e.preventDefault();
+      btn.classList.add('holding');
+      timer = setTimeout(() => {
+        btn.classList.remove('holding');
+        onConfirm();
+      }, 2000);
+    }
+
+    function cancel() {
+      btn.classList.remove('holding');
+      if (timer) { clearTimeout(timer); timer = null; }
+    }
+
+    btn.addEventListener('mousedown', start);
+    btn.addEventListener('touchstart', start, { passive: false });
+    btn.addEventListener('mouseup', cancel);
+    btn.addEventListener('mouseleave', cancel);
+    btn.addEventListener('touchend', cancel);
+    btn.addEventListener('touchcancel', cancel);
+  }
+
+  async function stopIssue(issueIdentifier) {
+    try {
+      const resp = await fetch(`${baseUrl}/api/v1/${encodeURIComponent(issueIdentifier)}/stop`, {
+        method: 'POST',
+      });
+      const data = await resp.json();
+      if (data.stopped) {
+        showError(`Stopped ${issueIdentifier}: ${data.reason}`);
+      } else {
+        showError(`Failed to stop: ${data.reason || 'Unknown error'}`);
+      }
+    } catch (err) {
+      showError(`Stop failed: ${err.message}`);
+    }
+  }
+
+  // ── Reports Screen ──
+  // TODO: Reports are static HTML files in ~/.symphony/reports/.
+  // In a file:// context we cannot list directory contents.
+  // When served via the dashboard server, reports could be listed via an API endpoint.
+  function loadReports() {
+    // Try fetching a reports index from the dashboard server if available
+    // For now, render a list of known date patterns
+    const container = $('#reports-content');
+    const today = new Date();
+    const reports = [];
+
+    // Generate last 7 days of potential report dates
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+      reports.push({
+        date: dateStr,
+        label: d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+      });
+    }
+
+    if (reports.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">📊</div>
+          <div class="empty-state-text">No reports available</div>
+        </div>`;
+      return;
+    }
+
+    // When served from file://, link to sibling reports
+    // When served from http, try the reports path
+    const isFile = window.location.protocol === 'file:';
+
+    container.innerHTML = reports.map(r => {
+      const href = isFile ? `./${r.date}.html` : `${baseUrl}/reports/${r.date}.html`;
+      return `
+        <a class="report-item" href="${esc(href)}" target="_blank" rel="noopener">
+          <div>
+            <div class="report-date">${esc(r.label)}</div>
+            <div class="report-size">${esc(r.date)}</div>
+          </div>
+          <span class="report-arrow">→</span>
+        </a>`;
+    }).join('');
+  }
+
+  // ── Utilities ──
+  function esc(str) {
+    if (str == null) return '';
+    const div = document.createElement('div');
+    div.textContent = String(str);
+    return div.innerHTML;
+  }
+
+  function fmtNum(n) {
+    if (n == null) return '0';
+    return Number(n).toLocaleString('en-US');
+  }
+
+  function fmtDuration(seconds) {
+    if (!seconds || seconds < 0) return '0s';
+    seconds = Math.round(seconds);
+    if (seconds < 60) return `${seconds}s`;
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    if (m < 60) return `${m}m ${s}s`;
+    const h = Math.floor(m / 60);
+    const rm = m % 60;
+    return `${h}h ${rm}m`;
+  }
+
+  function fmtTime(isoStr) {
+    if (!isoStr) return '';
+    try {
+      const d = new Date(isoStr);
+      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    } catch { return ''; }
+  }
+})();
+</script>
+</body>
+</html>
