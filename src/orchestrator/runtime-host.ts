@@ -36,6 +36,7 @@ import {
   type DashboardServerInstance,
   type IssueDetailResponse,
   type RefreshResponse,
+  type StopIssueResponse,
   startDashboardServer,
 } from "../observability/dashboard-server.js";
 import { createRunnerFromConfig, isAiSdkRunner } from "../runners/factory.js";
@@ -386,6 +387,24 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
       coalesced,
       requested_at: requestedAt,
       operations: ["poll", "reconcile"],
+    };
+  }
+
+  async requestIssueStop(issueIdentifier: string): Promise<StopIssueResponse> {
+    const stopRequest =
+      await this.orchestrator.requestStopByIdentifier(issueIdentifier);
+    if (stopRequest === null) {
+      return {
+        issue_identifier: issueIdentifier,
+        stopped: false,
+        reason: `Issue '${issueIdentifier}' is not currently running.`,
+      };
+    }
+
+    return {
+      issue_identifier: issueIdentifier,
+      stopped: true,
+      reason: "manual_stop",
     };
   }
 

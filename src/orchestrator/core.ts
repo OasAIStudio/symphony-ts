@@ -177,6 +177,24 @@ export class OrchestratorCore {
   }
 
   /**
+   * Request a stop for a running issue identified by its human-readable
+   * identifier (e.g. "SYMPH-209"). Returns the StopRequest if the issue was
+   * running, or null if the identifier is not currently tracked as running.
+   */
+  async requestStopByIdentifier(
+    issueIdentifier: string,
+  ): Promise<StopRequest | null> {
+    const runningEntry = Object.values(this.state.running).find(
+      (entry) => entry.identifier === issueIdentifier,
+    );
+    if (runningEntry === undefined) {
+      return null;
+    }
+
+    return await this.requestStop(runningEntry, true, "manual_stop");
+  }
+
+  /**
    * Retrieve and consume the execution history snapshot captured during the
    * most recent onWorkerExit call for the given issue. Returns undefined if
    * no snapshot exists (e.g., the exit did not append a stage record).
