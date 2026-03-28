@@ -15,4 +15,7 @@ export interface IssueTracker {
     labelNames: string[],
     excludeStateNames: string[],
   ): Promise<Issue[]>;
+  fetchParent?(
+    issueId: string,
+  ): Promise<{ identifier: string; title: string; url: string } | null>;
 }

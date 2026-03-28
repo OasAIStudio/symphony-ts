@@ -240,6 +240,106 @@ describe("LinearTrackerClient", () => {
   });
 });
 
+describe("fetchParent", () => {
+  it("returns parent data on cache miss", async () => {
+    const mockFetch = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        data: {
+          issue: {
+            id: "issue-1",
+            identifier: "SYMPH-100",
+            parent: {
+              identifier: "SYMPH-50",
+              title: "Parent Epic",
+              url: "https://linear.app/team/issue/SYMPH-50",
+            },
+          },
+        },
+      }),
+    );
+    const client = createClient({ fetchFn: mockFetch });
+
+    const result = await client.fetchParent("issue-1");
+
+    expect(result).toEqual({
+      identifier: "SYMPH-50",
+      title: "Parent Epic",
+      url: "https://linear.app/team/issue/SYMPH-50",
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns cached data on cache hit without making a GraphQL call", async () => {
+    const mockFetch = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        data: {
+          issue: {
+            id: "issue-1",
+            identifier: "SYMPH-100",
+            parent: {
+              identifier: "SYMPH-50",
+              title: "Parent Epic",
+              url: "https://linear.app/team/issue/SYMPH-50",
+            },
+          },
+        },
+      }),
+    );
+    const client = createClient({ fetchFn: mockFetch });
+
+    await client.fetchParent("issue-1");
+    const result = await client.fetchParent("issue-1");
+
+    expect(result).toEqual({
+      identifier: "SYMPH-50",
+      title: "Parent Epic",
+      url: "https://linear.app/team/issue/SYMPH-50",
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns null when issue has no parent", async () => {
+    const mockFetch = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        data: {
+          issue: {
+            id: "issue-2",
+            identifier: "SYMPH-101",
+            parent: null,
+          },
+        },
+      }),
+    );
+    const client = createClient({ fetchFn: mockFetch });
+
+    const result = await client.fetchParent("issue-2");
+
+    expect(result).toBeNull();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("caches null results to avoid re-fetching for orphan issues", async () => {
+    const mockFetch = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        data: {
+          issue: {
+            id: "issue-2",
+            identifier: "SYMPH-101",
+            parent: null,
+          },
+        },
+      }),
+    );
+    const client = createClient({ fetchFn: mockFetch });
+
+    await client.fetchParent("issue-2");
+    const result = await client.fetchParent("issue-2");
+
+    expect(result).toBeNull();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
 function createClient(
   overrides: Partial<ConstructorParameters<typeof LinearTrackerClient>[0]> = {},
 ): LinearTrackerClient {

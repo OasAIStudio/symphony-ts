@@ -357,17 +357,33 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
       (entry) => entry.identifier === issueIdentifier,
     );
     if (running !== undefined) {
-      return toRunningIssueDetail(running, this.workspaceManager);
+      const parent = await this.fetchParentSafe(running.issue.id);
+      return toRunningIssueDetail(running, this.workspaceManager, parent);
     }
 
     const retry = Object.values(
       this.orchestrator.getState().retryAttempts,
     ).find((entry) => entry.identifier === issueIdentifier);
     if (retry !== undefined) {
-      return toRetryIssueDetail(issueIdentifier, retry);
+      const parent = await this.fetchParentSafe(retry.issueId);
+      return toRetryIssueDetail(issueIdentifier, retry, parent);
     }
 
     return null;
+  }
+
+  private async fetchParentSafe(
+    issueId: string,
+  ): Promise<{ identifier: string; title: string; url: string } | null> {
+    if (typeof this.tracker.fetchParent !== "function") {
+      return null;
+    }
+    try {
+      return await this.tracker.fetchParent(issueId);
+    } catch {
+      // Non-critical — return null rather than failing the entire detail request
+      return null;
+    }
   }
 
   async requestRefresh(): Promise<RefreshResponse> {
@@ -1374,6 +1390,7 @@ function toHookMessageSuffix(
 function toRunningIssueDetail(
   running: RunningEntry,
   workspaceManager: WorkspaceManager,
+  parent: { identifier: string; title: string; url: string } | null,
 ): IssueDetailResponse {
   return {
     issue_identifier: running.identifier,
@@ -1407,12 +1424,14 @@ function toRunningIssueDetail(
     recent_events: [],
     last_error: null,
     tracked: {},
+    parent,
   };
 }
 
 function toRetryIssueDetail(
   issueIdentifier: string,
   retry: RetryEntry,
+  parent: { identifier: string; title: string; url: string } | null,
 ): IssueDetailResponse {
   return {
     issue_identifier: issueIdentifier,
@@ -1435,6 +1454,7 @@ function toRetryIssueDetail(
     recent_events: [],
     last_error: retry.error,
     tracked: {},
+    parent,
   };
 }
 

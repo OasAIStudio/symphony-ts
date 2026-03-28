@@ -76,6 +76,11 @@ export interface IssueDetailResponse {
   }>;
   last_error: string | null;
   tracked: Record<string, unknown>;
+  parent: {
+    identifier: string;
+    title: string;
+    url: string;
+  } | null;
 }
 
 export interface RefreshResponse {

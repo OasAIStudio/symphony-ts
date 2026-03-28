@@ -15,6 +15,7 @@ import {
   LINEAR_ISSUES_BY_LABELS_QUERY,
   LINEAR_ISSUES_BY_STATES_QUERY,
   LINEAR_ISSUE_PARENT_AND_SIBLINGS_QUERY,
+  LINEAR_ISSUE_PARENT_DETAIL_QUERY,
   LINEAR_ISSUE_STATES_BY_IDS_QUERY,
   LINEAR_ISSUE_UPDATE_MUTATION,
   LINEAR_OPEN_ISSUES_BY_LABELS_QUERY,
@@ -87,6 +88,21 @@ interface LinearIssueParentAndSiblingsData {
   };
 }
 
+interface LinearIssueParentDetailData {
+  issue?: {
+    id?: string;
+    identifier?: string;
+    parent?: {
+      identifier?: string;
+      title?: string;
+      url?: string;
+    } | null;
+  };
+}
+
+/** Sentinel value used to cache null parent lookups. */
+const NULL_PARENT_SENTINEL = Symbol("null-parent");
+
 interface LinearWorkflowStatesData {
   workflowStates?: {
     nodes?: Array<{ id?: string; name?: string }>;
@@ -111,6 +127,11 @@ export class LinearTrackerClient implements IssueTracker {
   private readonly pageSize: number;
   private readonly networkTimeoutMs: number;
   private readonly fetchFn: typeof fetch;
+  private readonly parentCache = new Map<
+    string,
+    | { identifier: string; title: string; url: string }
+    | typeof NULL_PARENT_SENTINEL
+  >();
 
   constructor(options: LinearTrackerClientOptions) {
     this.endpoint = options.endpoint;
@@ -318,6 +339,39 @@ export class LinearTrackerClient implements IssueTracker {
     );
 
     await this.updateIssueState(parent.id, "Done", teamKey);
+  }
+
+  async fetchParent(
+    issueId: string,
+  ): Promise<{ identifier: string; title: string; url: string } | null> {
+    const cached = this.parentCache.get(issueId);
+    if (cached !== undefined) {
+      return cached === NULL_PARENT_SENTINEL ? null : cached;
+    }
+
+    const response = await this.postGraphql<LinearIssueParentDetailData>(
+      LINEAR_ISSUE_PARENT_DETAIL_QUERY,
+      { issueId },
+    );
+
+    const parentData = response.issue?.parent;
+    if (
+      !parentData ||
+      typeof parentData.identifier !== "string" ||
+      typeof parentData.title !== "string" ||
+      typeof parentData.url !== "string"
+    ) {
+      this.parentCache.set(issueId, NULL_PARENT_SENTINEL);
+      return null;
+    }
+
+    const result = {
+      identifier: parentData.identifier,
+      title: parentData.title,
+      url: parentData.url,
+    };
+    this.parentCache.set(issueId, result);
+    return result;
   }
 
   async executeRawGraphql(

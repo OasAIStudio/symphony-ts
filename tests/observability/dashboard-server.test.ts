@@ -789,6 +789,7 @@ function createIssueDetail(): IssueDetailResponse {
     ],
     last_error: null,
     tracked: {},
+    parent: null,
   };
 }
 
