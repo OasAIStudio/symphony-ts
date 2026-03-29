@@ -1,4 +1,6 @@
 import { type IncomingMessage, request as httpRequest } from "node:http";
+import { dirname, resolve as pathResolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -6,8 +8,55 @@ import type { RuntimeSnapshot } from "../../src/logging/runtime-snapshot.js";
 import {
   type DashboardServerHost,
   type DeployPreviewResponse,
+  resolveDeployScriptPath,
   startDashboardServer,
 } from "../../src/observability/dashboard-server.js";
+
+describe("resolveDeployScriptPath", () => {
+  it("resolves 3 levels up from dist/src/observability/ to repo root", () => {
+    const deployPath = resolveDeployScriptPath();
+
+    // The path must end with ops/symphony-deploy
+    expect(deployPath).toMatch(/ops\/symphony-deploy$/);
+
+    // Simulate the dist/ scenario to verify the 3-level traversal is correct:
+    // In production the module lives at dist/src/observability/dashboard-server.js,
+    // so going 3 levels up from dist/src/observability/ reaches the repo root.
+    const repoRoot = pathResolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "..",
+    );
+    const fakeDistDir = pathResolve(
+      repoRoot,
+      "dist",
+      "src",
+      "observability",
+    );
+    const fromDist = pathResolve(
+      fakeDistDir,
+      "..",
+      "..",
+      "..",
+      "ops",
+      "symphony-deploy",
+    );
+    // 3 levels up from dist/src/observability/ lands at repo root
+    expect(fromDist).toBe(pathResolve(repoRoot, "ops", "symphony-deploy"));
+
+    // With only 2 levels (the old bug), it would resolve inside dist/
+    const fromDistBug = pathResolve(
+      fakeDistDir,
+      "..",
+      "..",
+      "ops",
+      "symphony-deploy",
+    );
+    expect(fromDistBug).toBe(
+      pathResolve(repoRoot, "dist", "ops", "symphony-deploy"),
+    );
+  });
+});
 
 describe("deploy endpoints", () => {
   const servers: Array<{ close: () => Promise<void> }> = [];

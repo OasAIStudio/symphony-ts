@@ -326,6 +326,40 @@ describe("GET /api/v1/github/queue", () => {
     expect(response.headers["access-control-allow-origin"]).toBe("*");
   });
 
+  it("returns PR data with empty alerts when gh issue list fails", async () => {
+    const execGh: ExecGh = async (args: string[]) => {
+      if (args.includes("issue")) {
+        throw new Error("issues are disabled for this repo");
+      }
+      return samplePRs;
+    };
+
+    const server = await startDashboardServer({
+      port: 0,
+      host: createHost(),
+      githubRepoSlug: "org/repo",
+      execGh,
+    });
+    servers.push(server);
+
+    const response = await sendRequest(server.port, {
+      method: "GET",
+      path: "/api/v1/github/queue",
+    });
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+
+    // PR data is still returned
+    expect(body.repo).toBe("org/repo");
+    expect(body.in_queue).toHaveLength(1);
+    expect(body.in_queue[0].number).toBe(1);
+    expect(body.recently_merged).toHaveLength(1);
+    expect(body.rejected).toHaveLength(1);
+
+    // Alerts are empty because issue list failed
+    expect(body.alerts).toEqual([]);
+  });
+
   it("prefers explicit githubRepoSlug over REPO_URL env var", async () => {
     process.env.REPO_URL = "https://github.com/env/repo.git";
     const mockExecGh = createMockExecGh();

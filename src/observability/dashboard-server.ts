@@ -589,20 +589,25 @@ async function fetchGitHubQueue(
 ): Promise<GitHubQueueResponse> {
   const prFields = "number,title,url,author,state,mergedAt,labels";
 
-  const [prStdout, issueStdout] = await Promise.all([
-    execGh([
-      "pr",
-      "list",
-      "--repo",
-      repoSlug,
-      "--json",
-      prFields,
-      "--limit",
-      "50",
-      "--state",
-      "all",
-    ]),
-    execGh([
+  const prStdout = await execGh([
+    "pr",
+    "list",
+    "--repo",
+    repoSlug,
+    "--json",
+    prFields,
+    "--limit",
+    "50",
+    "--state",
+    "all",
+  ]);
+
+  const prs = JSON.parse(prStdout) as GhPrJsonItem[];
+  const { in_queue, recently_merged, rejected } = categorizePRs(prs);
+
+  let alerts: GitHubQueueAlert[] = [];
+  try {
+    const issueStdout = await execGh([
       "issue",
       "list",
       "--repo",
@@ -613,20 +618,17 @@ async function fetchGitHubQueue(
       "pipeline-halt",
       "--limit",
       "20",
-    ]),
-  ]);
-
-  const prs = JSON.parse(prStdout) as GhPrJsonItem[];
-  const issues = JSON.parse(issueStdout) as GhIssueJsonItem[];
-
-  const { in_queue, recently_merged, rejected } = categorizePRs(prs);
-
-  const alerts: GitHubQueueAlert[] = issues.map((issue) => ({
-    number: issue.number,
-    title: issue.title,
-    url: issue.url,
-    createdAt: issue.createdAt,
-  }));
+    ]);
+    const issues = JSON.parse(issueStdout) as GhIssueJsonItem[];
+    alerts = issues.map((issue) => ({
+      number: issue.number,
+      title: issue.title,
+      url: issue.url,
+      createdAt: issue.createdAt,
+    }));
+  } catch {
+    // Issues may be disabled on the repo — return PR data with empty alerts
+  }
 
   return {
     repo: repoSlug,
@@ -641,10 +643,10 @@ async function fetchGitHubQueue(
 
 // ── Deploy types & helpers ────────────────────────────────────────
 
-function resolveDeployScriptPath(): string {
+export function resolveDeployScriptPath(): string {
   const thisFile = fileURLToPath(import.meta.url);
-  // src/observability/dashboard-server.ts -> repo root -> ops/symphony-deploy
-  const repoRoot = pathResolve(dirname(thisFile), "..", "..");
+  // dist/src/observability/dashboard-server.js -> repo root (3 levels up) -> ops/symphony-deploy
+  const repoRoot = pathResolve(dirname(thisFile), "..", "..", "..");
   return pathResolve(repoRoot, "ops", "symphony-deploy");
 }
 
